@@ -41,7 +41,7 @@ void generate_list_files(list_response_t *file_list) {
 
             file_list->metadata[file_list->n_files].slot = i;
             file_list->metadata[file_list->n_files].group_id = temp_file.group_id;
-            strcpy(file_list->metadata[file_list->n_files].name, (char *)&temp_file.name);
+            memcpy(file_list->metadata[file_list->n_files].name, temp_file.name, MAX_NAME_SIZE);
             file_list->n_files++;
         }
     }
@@ -105,8 +105,12 @@ int read(uint16_t pkt_len, uint8_t *buf) {
         return -1;
     }
     // copy structure of the persistent file
-    memcpy(file_info.name, &curr_file.name, strlen(curr_file.name));
-    memcpy(file_info.contents, &curr_file.contents, curr_file.contents_len);
+    memcpy(file_info.name, &curr_file.name, MAX_NAME_SIZE);
+    uint16_t out_len = curr_file.contents_len;
+    if (out_len > MAX_CONTENTS_SIZE) out_len = MAX_CONTENTS_SIZE;
+
+    memcpy(file_info.contents, curr_file.contents, out_len);
+    pkt_len_t length = MAX_NAME_SIZE + out_len;
 
     if (!validate_permission(curr_file.group_id, PERM_READ)) {
         print_error("Invalid permission");
@@ -114,7 +118,6 @@ int read(uint16_t pkt_len, uint8_t *buf) {
     }
 
     // write a success message with the file information
-    pkt_len_t length = MAX_NAME_SIZE + curr_file.contents_len;
     write_packet(CONTROL_INTERFACE, READ_MSG, &file_info, length);
     return 0;
 }
@@ -197,11 +200,21 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
     len_recv_msg = 0xffff;
 
     // recieve the response message
-    read_packet(TRANSFER_INTERFACE, &cmd, &recv_resp, &len_recv_msg);
+        if (read_packet(TRANSFER_INTERFACE, &cmd, &recv_resp, &len_recv_msg) < 0) {
+        print_error("Failed to receive response");
+        return -1;
+    }
     if (cmd != RECEIVE_MSG) {
         print_error("Opcode mismatch");
         return -1;
     }
+    
+    // Enforce local receive permission before writing file
+    if (!validate_permission(recv_resp.file.group_id, PERM_RECEIVE)) {
+        print_error("Permission denied: cannot receive this group");
+        return -1;
+    }
+
 
     // write that file into the file system
     if (write_file(command->write_slot, &recv_resp.file, recv_resp.uuid) < 0) {
@@ -240,14 +253,29 @@ int interrogate(uint16_t pkt_len, uint8_t *buf) {
     len_recv_msg = 0xffff;
 
     // recieve the response message
-    read_packet(TRANSFER_INTERFACE, &cmd, &final_list_buf, &len_recv_msg);
+    if (read_packet(TRANSFER_INTERFACE, &cmd, &final_list_buf, &len_recv_msg) < 0) {
+        print_error("Failed to receive interrogate response");
+        return -1;
+    }
     if (cmd != INTERROGATE_MSG) {
         print_error("Opcode mismatch");
         return -1;
     }
 
-    // return the final list to the user
-    write_packet(CONTROL_INTERFACE, INTERROGATE_MSG, &final_list_buf, len_recv_msg);
+
+    // Filter neighbor list to only groups we have RECEIVE permission for
+    list_response_t filtered;
+    memset(&filtered, 0, sizeof(filtered));
+
+    for (uint8_t i = 0; i < final_list_buf.n_files; i++) {
+        if (validate_permission(final_list_buf.metadata[i].group_id, PERM_RECEIVE)) {
+            filtered.metadata[filtered.n_files++] = final_list_buf.metadata[i];
+        }
+    }
+
+    // Return filtered list to the user
+    pkt_len_t out_len = LIST_PKT_LEN(filtered.n_files);
+    write_packet(CONTROL_INTERFACE, INTERROGATE_MSG, &filtered, out_len);
     return 0;
 }
 
@@ -286,17 +314,26 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             write_length = LIST_PKT_LEN(file_list.n_files);
             write_packet(TRANSFER_INTERFACE, INTERROGATE_MSG, &file_list, write_length);
             break;
-        case RECEIVE_MSG:
-            // get the request
+        case RECEIVE_MSG: {
             command = (receive_request_t *)uart_buf;
 
-            // TODO: the reference design does not implement *ANY* security
-            // you will want to add something here to comply with SR1
-
-            // if this read fails, the other device will not receive a response and
-            // may need to be reset before further testing can occur
+            // Read the requested file first so we know its group_id
             if (read_file(command->slot, &recv_resp.file) < 0) {
                 print_error("Failed to read file");
+                return -1;
+            }
+
+            // Enforce requester's RECEIVE permission before sending file
+            bool allowed = false;
+            for (int i = 0; i < MAX_PERMS; i++) {
+                if (command->permissions[i].group_id == recv_resp.file.group_id &&
+                    command->permissions[i].receive) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed) {
+                print_error("Requester lacks RECEIVE permission for this group");
                 return -1;
             }
 
@@ -308,10 +345,10 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
 
             memcpy(&recv_resp.uuid, &metadata->uuid, UUID_SIZE);
 
-            // send the file to the neighbor hsm
             write_length = sizeof(receive_response_t);
             write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, &recv_resp, write_length);
             break;
+        }
         default:
             print_error("Bad message type");
             return -1;
