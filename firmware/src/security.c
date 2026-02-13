@@ -12,26 +12,32 @@
  */
 #include "security.h"
 #include "host_messaging.h"
+#include "secrets.h"
+#include <string.h>
 
 bool check_pin(unsigned char *pin) {
-    print_debug("Checking PIN\n");
+    if (!pin) return false;
 
-    // TODO: the reference design doesn't implement *ANY* security.
-    // This function currently does nothing. Your team should add the
-    // appropriate security checks here to implement the security
-    // requirements.
-    return true;
+    // pin_t is 6 bytes, not null-terminated
+    if (memcmp(pin, HSM_PIN, PIN_LENGTH) == 0) return true;
+
+
+    print_error("Invalid pin");
+    return false;
 }
 
+
+
 bool validate_permission(uint16_t group_id, permission_enum_t perm) {
-    char output_buf[128] = {0};
-
-    sprintf(output_buf, "Checking %c permissions for group: %hx\n", perm, group_id);
-    print_debug(output_buf);
-
-    // TODO: the reference design doesn't implement *ANY* security.
-    // This function currently does nothing. Your team should add the
-    // appropriate security checks here to implement the security
-    // requirements.
-    return true;
+    for (int i = 0; i < MAX_PERMS; i++) {
+        if (global_permissions[i].group_id == group_id) {
+            switch (perm) {
+                case PERM_READ:    return global_permissions[i].read;
+                case PERM_WRITE:   return global_permissions[i].write;
+                case PERM_RECEIVE: return global_permissions[i].receive;
+                default: return false;
+            }
+        }
+    }
+    return false; // deny by default
 }
