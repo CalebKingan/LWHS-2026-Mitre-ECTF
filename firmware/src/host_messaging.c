@@ -184,34 +184,39 @@ int write_packet(int uart_id, msg_type_t type, const void *buf, uint16_t len) {
  *  @return MSG_OK on success, else other msg_status_t
 */
 int read_packet(int uart_id, msg_type_t* cmd, void *buf, uint16_t *len) {
-    msg_header_t header;
+    msg_header_t header = {0};
 
-    while (1) {
-
-        // read header
-        if (read_bytes(uart_id, &header, sizeof(header)) < 0)
-            return -1;
-
-        if (header.magic != MSG_MAGIC)
-            return MSG_BAD_LEN;
-
-        // ---------- IMPORTANT FIX ----------
-        // Ignore ACK packets — they are flow control, not real messages
-        if (header.cmd == ACK_MSG) {
-            // ACK has zero body — just discard and wait for real message
-            continue;
-        }
-        // -----------------------------------
-
-        if (cmd) *cmd = header.cmd;
-        if (len) *len = header.len;
-
-        if (buf && header.len > 0) {
-            if (read_bytes(uart_id, buf, header.len) < 0)
-                return -1;
-        }
-
-        return 0;
+    // cmd must be a valid pointer
+    if (cmd == NULL) {
+        return MSG_BAD_PTR;
     }
+
+    read_header(uart_id, &header);
+
+    *cmd = header.cmd;
+
+    if (len != NULL) {
+        if (*len && header.len > *len) {
+            *len = 0;
+            return MSG_BAD_LEN;
+        }
+
+        *len = header.len;
+    }
+
+    if (header.cmd != ACK_MSG) {
+        write_ack(uart_id);  // ACK the header
+        if (header.len && buf != NULL) {
+            if (read_bytes(uart_id, buf, header.len) != MSG_OK) {
+                return MSG_NO_ACK;
+            }
+        }
+        if (header.len) {
+            if (write_ack(uart_id) != MSG_OK) { // ACK the final block (not handled by read_bytes)
+                return MSG_NO_ACK;
+            }
+        }
+    }
+    return MSG_OK;
 }
 
