@@ -70,7 +70,7 @@ int list(uint16_t pkt_len, uint8_t *buf) {
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
-        return 0;
+        return -1;
     }
 
     // write success packet with list
@@ -94,7 +94,7 @@ int read(uint16_t pkt_len, uint8_t *buf) {
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
-        return 0;
+        return -1;
     }
 
     // zeroizing memory is a pretty good practice
@@ -102,7 +102,7 @@ int read(uint16_t pkt_len, uint8_t *buf) {
 
     if (read_file(command->slot, &curr_file) < 0) {
         print_error("Failed to read file");
-        return 0;
+        return -1;
     }
     // copy structure of the persistent file
     memcpy(file_info.name, &curr_file.name, MAX_NAME_SIZE);
@@ -114,7 +114,7 @@ int read(uint16_t pkt_len, uint8_t *buf) {
 
     if (!validate_permission(curr_file.group_id, PERM_READ)) {
         print_error("Invalid permission");
-        return 0;
+        return -1;
     }
 
     // write a success message with the file information
@@ -137,12 +137,12 @@ int write(uint16_t pkt_len, uint8_t *buf) {
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
-        return 0;
+        return -1;
     }
 
     if (!validate_permission(command->group_id, PERM_WRITE)) {
         print_error("Invalid permission");
-        return 0;
+        return -1;
     }
 
     create_file(
@@ -156,7 +156,7 @@ int write(uint16_t pkt_len, uint8_t *buf) {
     // Store the file persistently
     if (write_file(command->slot, &curr_file, command->uuid) < 0) {
         print_error("Error storing file");
-        return 0;
+        return -1;
     }
 
     // Success message with an empty body
@@ -182,7 +182,7 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
-        return 0;
+        return -1;
     }
 
     // zeroize the buffers we will use
@@ -202,24 +202,24 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
     // recieve the response message
         if (read_packet(TRANSFER_INTERFACE, &cmd, &recv_resp, &len_recv_msg) < 0) {
         print_error("Failed to receive response");
-        return 0;
+        return -1;
     }
     if (cmd != RECEIVE_MSG) {
         print_error("Opcode mismatch");
-        return 0;
+        return -1;
     }
     
     // Enforce local receive permission before writing file
     if (!validate_permission(recv_resp.file.group_id, PERM_RECEIVE)) {
         print_error("Permission denied: cannot receive this group");
-        return 0;
+        return -1;
     }
 
 
     // write that file into the file system
     if (write_file(command->write_slot, &recv_resp.file, recv_resp.uuid) < 0) {
         print_error("Writing received file failed");
-        return 0;
+        return -1;
     }
     // empty success message
     write_packet(CONTROL_INTERFACE, RECEIVE_MSG, NULL, 0);
@@ -243,7 +243,7 @@ int interrogate(uint16_t pkt_len, uint8_t *buf) {
     // pin check
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
-        return 0;
+        return -1;
     }
 
     // request the file list from the neighboring device
@@ -255,11 +255,11 @@ int interrogate(uint16_t pkt_len, uint8_t *buf) {
     // recieve the response message
     if (read_packet(TRANSFER_INTERFACE, &cmd, &final_list_buf, &len_recv_msg) < 0) {
         print_error("Failed to receive interrogate response");
-        return 0;
+        return -1;
     }
     if (cmd != INTERROGATE_MSG) {
         print_error("Opcode mismatch");
-        return 0;
+        return -1;
     }
 
 
@@ -297,10 +297,7 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
 
     // Receive a packet from a neighboring hsm
     memset(uart_buf, 0, sizeof(uart_buf));
-    if (read_packet(TRANSFER_INTERFACE, &cmd, uart_buf, &read_length) < 0) {
-        print_error("listen: read_packet failed");
-        return 0;
-    }
+    read_packet(TRANSFER_INTERFACE, &cmd, uart_buf, &read_length);
 
     switch (cmd) {
         case INTERROGATE_MSG:
@@ -323,7 +320,7 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             // Read the requested file first so we know its group_id
             if (read_file(command->slot, &recv_resp.file) < 0) {
                 print_error("Failed to read file");
-                return 0;
+                return -1;
             }
 
             // Enforce requester's RECEIVE permission before sending file
@@ -337,13 +334,13 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             }
             if (!allowed) {
                 print_error("Requester lacks RECEIVE permission for this group");
-                return 0;
+                return -1;
             }
 
             metadata = get_file_metadata(command->slot);
             if (metadata == NULL) {
                 print_error("Getting metadata failed");
-                return 0;
+                return -1;
             }
 
             memcpy(&recv_resp.uuid, &metadata->uuid, UUID_SIZE);
@@ -354,7 +351,7 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
         }
         default:
             print_error("Bad message type");
-            return 0;
+            return -1;
     }
 
     // blank success message
