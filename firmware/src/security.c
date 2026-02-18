@@ -22,7 +22,7 @@ bool check_pin(unsigned char *pin) {
     if (memcmp(pin, HSM_PIN, PIN_LENGTH) == 0) return true;
 
 
-    //print_error("Invalid pin");
+    print_error("Invalid pin");
     return false;
 }
 
