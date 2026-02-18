@@ -28,7 +28,7 @@ typedef unsigned char pin_t[6];
 #define MAX_MSG_SIZE sizeof(write_command_t)
 
 // calculates the length of a list packet based on the number of files listed
-#define LIST_PKT_LEN(num_files) (sizeof(num_files) + ((MAX_NAME_SIZE + sizeof(group_id_t) + sizeof(slot_t)) * num_files))
+#define LIST_PKT_LEN(num_files) (sizeof(uint32_t) + (sizeof(file_metadata_t) * (num_files)))
 
 #pragma pack(push, 1) // Tells the compiler not to pad the struct members
 // for more information on what struct padding does, see:

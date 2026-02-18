@@ -219,3 +219,4 @@ int read_packet(int uart_id, msg_type_t* cmd, void *buf, uint16_t *len) {
     }
     return MSG_OK;
 }
+
