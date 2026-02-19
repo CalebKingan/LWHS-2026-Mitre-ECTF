@@ -295,6 +295,14 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
 
     read_length = sizeof(uart_buf);
 
+    // Best-effort helper to ensure requester receives a transfer response.
+    // This prevents peer receive operations from hanging on denied/error paths.
+    #define SEND_TRANSFER_ERROR(msg) do { \
+        print_error(msg); \
+        write_packet(TRANSFER_INTERFACE, ERROR_MSG, NULL, 0); \
+        return -1; \
+    } while (0)
+
     // Receive a packet from a neighboring hsm
     memset(uart_buf, 0, sizeof(uart_buf));
     read_packet(TRANSFER_INTERFACE, &cmd, uart_buf, &read_length);
@@ -319,8 +327,7 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
 
             // Read the requested file first so we know its group_id
             if (read_file(command->slot, &recv_resp.file) < 0) {
-                print_error("Failed to read file");
-                return -1;
+                SEND_TRANSFER_ERROR("Failed to read file");
             }
 
             // Enforce requester's RECEIVE permission before sending file
@@ -333,14 +340,12 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
                 }
             }
             if (!allowed) {
-                print_error("Requester lacks RECEIVE permission for this group");
-                return -1;
+                SEND_TRANSFER_ERROR("Requester lacks RECEIVE permission for this group");
             }
 
             metadata = get_file_metadata(command->slot);
             if (metadata == NULL) {
-                print_error("Getting metadata failed");
-                return -1;
+                SEND_TRANSFER_ERROR("Getting metadata failed");
             }
 
             memcpy(&recv_resp.uuid, &metadata->uuid, UUID_SIZE);
@@ -350,9 +355,10 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             break;
         }
         default:
-            print_error("Bad message type");
-            return -1;
+            SEND_TRANSFER_ERROR("Bad message type");
     }
+
+    #undef SEND_TRANSFER_ERROR
 
     // blank success message
     write_packet(CONTROL_INTERFACE, LISTEN_MSG, NULL, 0);
