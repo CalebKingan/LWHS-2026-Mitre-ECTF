@@ -165,10 +165,12 @@ int write_packet(int uart_id, msg_type_t type, const void *buf, uint16_t len) {
     // If there is data to write, write it
     if (len > 0) {
         result = write_bytes(uart_id, buf, len, type != DEBUG_MSG);
-        // If we still need to ACK the last block (write_bytes does not handle the final ACK)
-        if (type != DEBUG_MSG && read_ack(uart_id) != MSG_OK) {
-            return MSG_NO_ACK;
-        }
+    }
+
+    // Expect a final ACK for every non-debug packet, including zero-length payloads.
+    // This keeps the protocol synchronized with hosts that always ACK the final block.
+    if (type != DEBUG_MSG && read_ack(uart_id) != MSG_OK) {
+        return MSG_NO_ACK;
     }
 
     return MSG_OK;
@@ -185,6 +187,8 @@ int write_packet(int uart_id, msg_type_t type, const void *buf, uint16_t len) {
 */
 int read_packet(int uart_id, msg_type_t* cmd, void *buf, uint16_t *len) {
     msg_header_t header = {0};
+    uint8_t discard[32];
+    uint16_t bytes_remaining;
 
     // cmd must be a valid pointer
     if (cmd == NULL) {
@@ -206,17 +210,27 @@ int read_packet(int uart_id, msg_type_t* cmd, void *buf, uint16_t *len) {
 
     if (header.cmd != ACK_MSG) {
         write_ack(uart_id);  // ACK the header
+
         if (header.len && buf != NULL) {
             if (read_bytes(uart_id, buf, header.len) != MSG_OK) {
                 return MSG_NO_ACK;
             }
-        }
-        if (header.len) {
-            if (write_ack(uart_id) != MSG_OK) { // ACK the final block (not handled by read_bytes)
-                return MSG_NO_ACK;
+        } else if (header.len) {
+            // If no destination buffer is provided, drain the payload to keep the stream aligned.
+            bytes_remaining = header.len;
+            while (bytes_remaining > 0) {
+                uint16_t chunk = bytes_remaining > sizeof(discard) ? sizeof(discard) : bytes_remaining;
+                if (read_bytes(uart_id, discard, chunk) != MSG_OK) {
+                    return MSG_NO_ACK;
+                }
+                bytes_remaining -= chunk;
             }
+        }
+
+        // ACK the final block, including zero-length messages.
+        if (write_ack(uart_id) != MSG_OK) {
+            return MSG_NO_ACK;
         }
     }
     return MSG_OK;
 }
-
