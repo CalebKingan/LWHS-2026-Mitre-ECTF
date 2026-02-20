@@ -1,6 +1,6 @@
 /**
  * @file filesystem.h
- * @author Samuel Meyers
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
  * @brief eCTF flash-based filesystem management
  * @date 2026
  *
@@ -15,7 +15,7 @@
 #define __FILESYSTEM__
 
 #include <stdbool.h>
-#include "simple_flash.h"
+#include "flash.h"
 
 // #include "commands.h"
 

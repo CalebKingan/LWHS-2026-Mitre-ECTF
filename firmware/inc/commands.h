@@ -1,6 +1,6 @@
 /**
  * @file commands.h
- * @author Samuel Meyers
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
  * @brief eCTF command handlers
  * @date 2026
  *
@@ -16,7 +16,7 @@
 
 #include "security.h"
 #include "stdint.h"
-#include "simple_flash.h"
+#include "flash.h"
 #include "filesystem.h"
 #include "secrets.h"
 

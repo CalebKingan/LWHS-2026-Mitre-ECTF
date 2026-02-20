@@ -1,6 +1,6 @@
 /**
- * @file "simple_crypto.c"
- * @author Ben Janis
+ * @file "crypto.c"
+ * @author Lakota West High School eCTF Team (Original Design Ben Janis)
  * @brief Simplified Crypto API Implementation
  * @date 2026
  *
@@ -13,7 +13,7 @@
 
 #if CRYPTO_EXAMPLE
 
-#include "simple_crypto.h"
+#include "crypto.h"
 #include "security.h"
 #include <stdint.h>
 #include <string.h>

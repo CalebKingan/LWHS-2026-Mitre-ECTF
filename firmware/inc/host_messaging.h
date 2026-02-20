@@ -1,6 +1,6 @@
 /**
  * @file host_messaging.h
- * @author Samuel Meyers
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
  * @brief eCTF Host Messaging Implementation
  * @date 2026
  *
@@ -18,7 +18,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "simple_uart.h"
+#include "uart.h"
 
 #define CMD_TYPE_LEN sizeof(char)
 #define CMD_LEN_LEN sizeof(uint16_t)

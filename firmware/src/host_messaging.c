@@ -1,6 +1,6 @@
 /**
  * @file host_messaging.c
- * @author Samuel Meyers
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
  * @brief eCTF Host Messaging Implementation
  * @date 2026
  *

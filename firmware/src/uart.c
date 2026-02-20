@@ -1,6 +1,6 @@
 /**
- * @file "simple_uart.c"
- * @author Samuel Meyers
+ * @file "uart.c"
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
  * @brief UART Interrupt Handler Implementation
  * @date 2026
  *
@@ -11,7 +11,7 @@
  * @copyright Copyright (c) 2026 The MITRE Corporation
  */
 
-#include "simple_uart.h"
+#include "uart.h"
 
 /**********************************************************
  *************** HARDWARE ABSTRACTIONS ********************

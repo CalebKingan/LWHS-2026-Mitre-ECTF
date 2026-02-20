@@ -1,6 +1,6 @@
 /**
  * @file security.h
- * @author Samuel Meyers
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
  * @brief Stub file to hold security checks
  * @date 2026
  *

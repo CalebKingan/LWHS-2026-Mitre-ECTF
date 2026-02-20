@@ -1,6 +1,6 @@
 /**
- * @file "simple_crypto.h"
- * @author Ben Janis
+ * @file "crypto.h"
+ * @author Lakota West High School eCTF Team (Original Design Ben Janis)
  * @brief Simplified Crypto API Header
  * @date 2026
  *
