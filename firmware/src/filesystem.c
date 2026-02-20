@@ -16,6 +16,35 @@
 #include "filesystem.h"
 #include "flash.h"
 
+static bool is_slot_valid(slot_t slot){
+    return slot < MAX_FILE_COUNT;
+}
+
+static bool is_valid_file_region(uint32_t flash_addr, uint32_t length) {
+    uint32_t storage_start = FILES_START_ADDR;
+    uint32_t storage_end = FILES_START_ADDR + (MAX_FILE_COUNT * STORED_FILE_SIZE);
+    uint32_t write_end;
+
+    if (length > STORED_FILE_SIZE)
+        return false;
+
+    if (flash_addr < storage_start || flash_addr >= storage_end)
+        return false;
+
+    if (flash_addr >= (uint32_t)_FLASH_FAT_START)
+        return false;
+
+    write_end = flash_addr + length;
+    if (write_end < flash_addr)
+        return false;
+
+    if (write_end > storage_end || write_end > (uint32_t)_FLASH_FAT_START)
+        return false;
+
+    return true;
+
+}
+
 int load_fat() {
     flash_read((uint32_t)_FLASH_FAT_START, FILE_ALLOCATION_TABLE, sizeof(FILE_ALLOCATION_TABLE));
     return 0;
@@ -43,6 +72,10 @@ int init_fs() {
 */
 bool is_slot_in_use(slot_t slot) {
     file_t temp_file;
+
+    if (!is_valid_slot(slot)){
+        return false;
+    }
     return (!read_file(slot, &temp_file) && temp_file.in_use == FILE_IN_USE);
 }
 
@@ -87,10 +120,24 @@ int create_file(
 */
 int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     unsigned int length, flash_addr;
+    if (!is_valid_slot(slot) || src == NULL || uuid == NULL)
+        return -1;
+
+    if (src->contents_len > MAX_CONTENTS_SIZE)
+        return -1;
+
+    
 
     flash_addr = FILE_START_PAGE_FROM_SLOT(slot);
     length = FILE_TOTAL_SIZE(src->contents_len);
-    // Update the FAT for the new file
+
+    if (length > STORED_FILE_SIZE)
+        return -1;
+
+    if (!is_valid_file_region(flash_addr, length))
+        return -1;
+    
+    
     memcpy(&FILE_ALLOCATION_TABLE[slot].uuid, uuid, UUID_SIZE);
     FILE_ALLOCATION_TABLE[slot].flash_addr = flash_addr;
     FILE_ALLOCATION_TABLE[slot].length = length;
@@ -113,13 +160,18 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
  * @return 0 upon success. A negative value otherwise.
 */
 int read_file(slot_t slot, file_t *dest) {
-    int flash_addr, file_size;
+    uint32_t flash_addr, file_size;
+
+    if (!is_valid_slot(slot) || dest == NULL)
+        return -1;
+    
 
     flash_addr = FILE_ALLOCATION_TABLE[slot].flash_addr;
     file_size = FILE_ALLOCATION_TABLE[slot].length;
-    if (flash_addr < 0 || file_size < 0) {
+
+    if(!is_valid_file_region(flash_addr, file_size))
         return -1;
-    }
+    
     flash_read(flash_addr, dest, file_size);
 
     return 0;
@@ -132,5 +184,7 @@ int read_file(slot_t slot, file_t *dest) {
  * @return A filesystem_entry_t * on success. NULL on error.
 */
 const filesystem_entry_t *get_file_metadata(slot_t slot) {
+    if (!is_valid_slot(slot))
+        return NULL;
     return &FILE_ALLOCATION_TABLE[slot];
 }
