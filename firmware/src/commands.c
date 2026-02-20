@@ -196,14 +196,19 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
     // request the file from the neighboring device
     write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, (void *)&request, sizeof(receive_request_t));
 
-    // set essentially no limit to the receive message size
-    len_recv_msg = 0xffff;
+    // limits receiving message size
+    len_recv_msg = sizeof(recv_resp);
 
-    // recieve the response message
-        if (read_packet(TRANSFER_INTERFACE, &cmd, &recv_resp, &len_recv_msg) < 0) {
+    //receive the response message
+    if (read_packet(TRANSFER_INTERFACE, &cmd, &recv_resp, &len_recv_msg) != MSG_OK) {
         print_error("Failed to receive response");
         return -1;
     }
+    if (len_recv_msg != sizeof(recv_resp)){
+         print_error("Malformed recieved response length");
+        return -1;
+    }
+    
     if (cmd != RECEIVE_MSG) {
         print_error("Opcode mismatch");
         return -1;
@@ -249,14 +254,19 @@ int interrogate(uint16_t pkt_len, uint8_t *buf) {
     // request the file list from the neighboring device
     write_packet(TRANSFER_INTERFACE, INTERROGATE_MSG, NULL, 0);
 
-    // set essentially no limit to the receive message size
-    len_recv_msg = 0xffff;
+    len_recv_msg = sizeof(final_list_buf);
 
     // recieve the response message
-    if (read_packet(TRANSFER_INTERFACE, &cmd, &final_list_buf, &len_recv_msg) < 0) {
+    if (read_packet(TRANSFER_INTERFACE, &cmd, &final_list_buf, &len_recv_msg) != MSG_OK) {
         print_error("Failed to receive interrogate response");
         return -1;
     }
+
+    if (len_recv_msg > sizeof(recv_resp)){
+         print_error("Malformed interrogate response length");
+        return -1;
+    }
+    
     if (cmd != INTERROGATE_MSG) {
         print_error("Opcode mismatch");
         return -1;
