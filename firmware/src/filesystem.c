@@ -65,10 +65,15 @@ int create_file(
     dest->group_id = group_id;
     dest->contents_len = contents_len;
 
-    // name must be null terminated, and the contents are defined by a length
-    strcpy(dest->name, name);
-    memcpy(dest->contents, contents, contents_len);
+    if (contents_len > MAX_CONTENTS_SIZE) 
+    {
+        return -1;
+    } 
+    dest->contents_len = contents_len;
+    memset(dest->name, 0, MAX_NAME_SIZE);
+    memcpy(dest->name, name, MAX_NAME_SIZE -1);
 
+    memcpy(dest->contents, contents, contents_len);
     return 0;
 }
 
