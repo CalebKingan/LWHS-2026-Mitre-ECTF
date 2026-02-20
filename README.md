@@ -58,7 +58,7 @@ Each HSM can accept commands for the following 6 commands
 - **Receive**
 
 Listen, Interrogate, and Receive require two boards connected together similar to this:
-![alt text](https://rules.ectf.mitre.org/_images/MSP-LITO-L2228-connected.png)
+![alt text](media/dual-board.png)
 
 ### The List Command
 
