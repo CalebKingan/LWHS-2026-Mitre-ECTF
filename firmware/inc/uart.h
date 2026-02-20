@@ -1,7 +1,7 @@
 /**
- * @file "simple_uart.h"
- * @author Samuel Meyers
- * @brief Simple UART Interface Header
+ * @file "uart.h"
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
+ * @brief UART Interface Header
  * @date 2026
  *
  * This source file is part of an example system for MITRE's 2026 Embedded CTF (eCTF).
@@ -12,8 +12,8 @@
  */
 
 
-#ifndef __SIMPLE_UART__
-#define __SIMPLE_UART__
+#ifndef __UART__
+#define __UART__
 
 #include <stdio.h>
 #include <stdint.h>
@@ -48,4 +48,4 @@ int uart_readbyte(int uart_id);
 */
 void uart_writebyte(int uart_id, uint8_t data);
 
-#endif // __SIMPLE_UART__
+#endif // __UART__

@@ -1,6 +1,6 @@
 /**
  * @file filesystem.c
- * @author Samuel Meyers
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
  * @brief eCTF flash-based filesystem management
  * @date 2026
  *
@@ -14,16 +14,16 @@
 #include <stdint.h>
 
 #include "filesystem.h"
-#include "simple_flash.h"
+#include "flash.h"
 
 int load_fat() {
-    flash_simple_read((uint32_t)_FLASH_FAT_START, FILE_ALLOCATION_TABLE, sizeof(FILE_ALLOCATION_TABLE));
+    flash_read((uint32_t)_FLASH_FAT_START, FILE_ALLOCATION_TABLE, sizeof(FILE_ALLOCATION_TABLE));
     return 0;
 }
 
 int store_fat() {
-    flash_simple_erase_page(_FLASH_FAT_START);
-    return flash_simple_write((uint32_t)_FLASH_FAT_START, FILE_ALLOCATION_TABLE, sizeof(FILE_ALLOCATION_TABLE));
+    flash_erase_page(_FLASH_FAT_START);
+    return flash_write((uint32_t)_FLASH_FAT_START, FILE_ALLOCATION_TABLE, sizeof(FILE_ALLOCATION_TABLE));
 }
 
 /** @brief Initialize the filesystem
@@ -93,11 +93,11 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
 
     // erase the pages that will store the file
     for (int i = 0; i < FILE_PAGE_COUNT; i++) {
-        flash_simple_erase_page(flash_addr + (FLASH_PAGE_SIZE * i));
+        flash_erase_page(flash_addr + (FLASH_PAGE_SIZE * i));
     }
 
     // now write the file
-    return flash_simple_write(FILE_ALLOCATION_TABLE[slot].flash_addr, src, length);
+    return flash_write(FILE_ALLOCATION_TABLE[slot].flash_addr, src, length);
 }
 
 /** @brief Read a file from persistent storage into memory
@@ -115,7 +115,7 @@ int read_file(slot_t slot, file_t *dest) {
     if (flash_addr < 0 || file_size < 0) {
         return -1;
     }
-    flash_simple_read(flash_addr, dest, file_size);
+    flash_read(flash_addr, dest, file_size);
 
     return 0;
 }

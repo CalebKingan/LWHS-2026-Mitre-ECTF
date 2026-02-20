@@ -1,7 +1,7 @@
 /**
- * @file "simple_flash.h"
- * @author Samuel Meyers
- * @brief Simple Flash Interface Header
+ * @file "flash.h"
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
+ * @brief Flash Interface Header
  * @date 2026
  *
  * This source file is part of an example system for MITRE's 2026 Embedded CTF (eCTF).
@@ -11,8 +11,8 @@
  * @copyright Copyright (c) 2026 The MITRE Corporation
  */
 
-#ifndef __SIMPLE_FLASH__
-#define __SIMPLE_FLASH__
+#ifndef __FLASH__
+#define __FLASH__
 
 #include <stdint.h>
 #include <string.h>
@@ -24,7 +24,7 @@
 #define FLASH_PAGE_SIZE DL_FLASHCTL_SECTOR_SIZE /* 1024 */
 
 /**
- * @brief Flash Simple Erase Page
+ * @brief Flash Erase Page
  *
  * @param address: uint32_t, address of flash page to erase
  *
@@ -35,9 +35,9 @@
  * Once erased, memory can only be written one way e.g. 1->0.
  * In order to be re-written the entire page must be erased.
 */
-int flash_simple_erase_page(uint32_t address);
+int flash_erase_page(uint32_t address);
 /**
- * @brief Flash Simple Read
+ * @brief Flash Read
  *
  * @param address: uint32_t, address of flash page to read
  * @param buffer: void*, pointer to buffer for data to be read into
@@ -46,9 +46,9 @@ int flash_simple_erase_page(uint32_t address);
  * This function reads data from the specified flash page into the buffer
  * with the specified amount of bytes
 */
-void flash_simple_read(uint32_t address, void* buffer, uint32_t size);
+void flash_read(uint32_t address, void* buffer, uint32_t size);
 /**
- * @brief Flash Simple Write
+ * @brief Flash Write
  *
  * @param address: uint32_t, address of flash page to write
  * @param buffer: void*, pointer to buffer to write data from
@@ -59,8 +59,8 @@ void flash_simple_read(uint32_t address, void* buffer, uint32_t size);
  * This function writes data to the specified flash page from the buffer passed
  * with the specified amount of bytes. Flash memory can only be written in one
  * way e.g. 1->0. To rewrite previously written memory see the
- * flash_simple_erase_page documentation.
+ * flash_erase_page documentation.
 */
-int flash_simple_write(uint32_t address, void* buffer, uint32_t size);
+int flash_write(uint32_t address, void* buffer, uint32_t size);
 
 #endif

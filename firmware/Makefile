@@ -9,22 +9,22 @@ BUILDDIR ?= /tmp/build
 VPATH = "src"
 LINKERFILE = "firmware.ld"
 
-# to download wolfssl for the simple crypto example, `cd ./firmware/ && git clone https://github.com/wolfSSL/wolfssl`
+# to download wolfssl for the crypto , `cd ./firmware/ && git clone https://github.com/wolfSSL/wolfssl`
 # then set this variable to 1
 CRYPTO_EXAMPLE = 0
 
 OBJECTS = $(BUILDDIR)/HSM.so \
-    $(BUILDDIR)/simple_uart.so \
+    $(BUILDDIR)/uart.so \
     $(BUILDDIR)/ti_msp_dl_config.so \
     $(BUILDDIR)/startup_mspm0l222x_ticlang.so \
-    $(BUILDDIR)/simple_flash.so \
+    $(BUILDDIR)/flash.so \
     $(BUILDDIR)/host_messaging.so \
     $(BUILDDIR)/security.so \
     $(BUILDDIR)/filesystem.so \
     $(BUILDDIR)/commands.so
 
 ifeq ($(CRYPTO_EXAMPLE), 1)
-OBJECTS += $(BUILDDIR)/simple_crypto.so
+OBJECTS += $(BUILDDIR)/crypto.so
 
 # change C flags
 CFLAGS += -DCRYPTO_EXAMPLE=1
@@ -45,7 +45,7 @@ CFLAGS += -DWOLF_CRYPTO_CB
 WOLFSSL_INC = wolfssl/wolfcrypt/src
 CFLAGS += -I./wolfssl
 
-# we need to build these objects for the simple crypto example
+# we need to build these objects for the crypto
 OBJECTS += $(WOLFSSL_INC)/aes.o $(WOLFSSL_INC)/hash.o
 OBJECTS += $(WOLFSSL_INC)/md5.o $(WOLFSSL_INC)/cryptocb.o
 endif

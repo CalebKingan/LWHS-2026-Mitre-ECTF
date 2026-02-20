@@ -1,6 +1,6 @@
 /**
  * @file commands.c
- * @author Samuel Meyers
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
  * @brief eCTF command handlers
  * @date 2026
  *

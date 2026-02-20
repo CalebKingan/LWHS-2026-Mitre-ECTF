@@ -1,6 +1,6 @@
 /**
  * @file status_led.h
- * @author Samuel Meyers
+ * @author Lakota West High School eCTF Team (Original Design Samuel Meyers)
  * @brief eCTF Status LED Implementation
  * @date 2026
  *
