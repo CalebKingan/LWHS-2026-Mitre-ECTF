@@ -73,7 +73,7 @@ int init_fs() {
 bool is_slot_in_use(slot_t slot) {
     file_t temp_file;
 
-    if (!is_valid_slot(slot)){
+    if (!is_slot_valid(slot)){
         return false;
     }
     return (!read_file(slot, &temp_file) && temp_file.in_use == FILE_IN_USE);
@@ -120,7 +120,7 @@ int create_file(
 */
 int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     unsigned int length, flash_addr;
-    if (!is_valid_slot(slot) || src == NULL || uuid == NULL)
+    if (!is_slot_valid(slot) || src == NULL || uuid == NULL)
         return -1;
 
     if (src->contents_len > MAX_CONTENTS_SIZE)
@@ -162,7 +162,7 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
 int read_file(slot_t slot, file_t *dest) {
     uint32_t flash_addr, file_size;
 
-    if (!is_valid_slot(slot) || dest == NULL)
+    if (!is_slot_valid(slot) || dest == NULL)
         return -1;
     
 
@@ -184,7 +184,7 @@ int read_file(slot_t slot, file_t *dest) {
  * @return A filesystem_entry_t * on success. NULL on error.
 */
 const filesystem_entry_t *get_file_metadata(slot_t slot) {
-    if (!is_valid_slot(slot))
+    if (!is_slot_valid(slot))
         return NULL;
     return &FILE_ALLOCATION_TABLE[slot];
 }
