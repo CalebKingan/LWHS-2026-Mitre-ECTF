@@ -262,7 +262,7 @@ int interrogate(uint16_t pkt_len, uint8_t *buf) {
         return -1;
     }
 
-    if (len_recv_msg > sizeof(recv_resp)){
+    if (len_recv_msg > sizeof(final_list_buf)){
          print_error("Malformed interrogate response length");
         return -1;
     }
