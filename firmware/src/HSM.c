@@ -113,7 +113,7 @@ int main(void) {
     while (1) {
         STATUS_LED_ON();
 
-        pkt_len = 0;
+        pkt_len = sizeof(uart_buf);
         result = read_packet(CONTROL_INTERFACE, &cmd, uart_buf, &pkt_len);
 
         if (result != MSG_OK) {
