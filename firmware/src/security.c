@@ -23,9 +23,6 @@
 #define NOISE_MAX_DELAY_CYCLES (CPUCLK_FREQ / 25000U)
 #define FI_COMPARE_REPETITIONS 2U
 #define FI_DELAY_TAG 0xC3D2E1F0U
-#define INVALID_PIN_DELAY_CYCLES (CPUCLK_FREQ * INVALID_PIN_DELAY)
-#define FI_DECISION_TRUE 0x13579BDFU
-#define FI_DECISION_FALSE 0xECA86420U
 
 static uint32_t noise_state = 0x6B1E4A2DU;
 
@@ -65,9 +62,6 @@ static void fi_hardened_delay(uint32_t cycles)
         cycles -= chunk;
     }
 
-    /* Guard mismatch indicates potential fault; deny by caller path. */
-    (void)guard_a;
-    (void)guard_b;
     if ((guard_a ^ guard_b) != 0xFFFFFFFFU) {
         delay_cycles(CPUCLK_FREQ * INVALID_PIN_DELAY);
     }
@@ -79,12 +73,6 @@ static uint8_t constant_time_pin_match_masked_once(const unsigned char *pin)
 
     for (uint32_t round = 0; round < PIN_MASKING_ROUNDS; round++) {
         uint8_t round_mask = (uint8_t)next_noise_u32();
-
-        for (uint32_t i = 0; i < PIN_LENGTH; i++) {
-            uint8_t lane_mask = (uint8_t)(round_mask ^ (uint8_t)next_noise_u32());
-            uint8_t masked_pin = (uint8_t)(pin[i] ^ lane_mask);
-            uint8_t masked_ref = (uint8_t)(((uint8_t)HSM_PIN[i]) ^ lane_mask);
-
 
         for (uint32_t i = 0; i < PIN_LENGTH; i++) {
             uint8_t lane_mask = (uint8_t)(round_mask ^ (uint8_t)next_noise_u32());
@@ -127,20 +115,6 @@ static bool constant_time_pin_match_masked_fi(const unsigned char *pin)
 bool check_pin(unsigned char *pin)
 {
     bool pin_valid = false;
-    volatile uint32_t decision = FI_DECISION_FALSE;
-    volatile uint32_t decision_inv = ~FI_DECISION_FALSE;
-
-    if (pin != NULL) {
-        pin_valid = constant_time_pin_match_masked_fi(pin);
-    }
-
-    if (pin_valid) {
-        decision = FI_DECISION_TRUE;
-        decision_inv = ~FI_DECISION_TRUE;
-    }
-
-    if ((decision == FI_DECISION_TRUE) &&
-        (decision_inv == ~FI_DECISION_TRUE)) {
 
     if (pin != NULL) {
         pin_valid = constant_time_pin_match_masked_fi(pin);
@@ -151,7 +125,6 @@ bool check_pin(unsigned char *pin)
         return true;
     }
 
-    fi_hardened_delay(INVALID_PIN_DELAY_CYCLES);
     fi_hardened_delay(CPUCLK_FREQ * INVALID_PIN_DELAY);
     apply_fake_noise_delay();
     return false;
