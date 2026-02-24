@@ -17,7 +17,7 @@
 #include "ti_msp_dl_config.h"
 
 static bool constant_time_pin_match(const unsigned char *pin) {
-    uint8_t diff = 0;
+    volatile uint8_t diff = 0;
 
     for (uint32_t i = 0; i<PIN_LENGTH; i++)
         diff |= (uint8_t)(pin[i] ^ (uint8_t)HSM_PIN[i]);
