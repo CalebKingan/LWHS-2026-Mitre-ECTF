@@ -14,12 +14,15 @@
 #include "host_messaging.h"
 #include "secrets.h"
 #include <string.h>
+#include "ti_msp_dl_config.h"
 
 bool check_pin(unsigned char *pin) {
     if (!pin) return false;
 
     // pin_t is 6 bytes, not null-terminated
     if (memcmp(pin, HSM_PIN, PIN_LENGTH) == 0) return true;
+
+    delay_cycles(CPUCLK_FREQ * INVALID_PIN_DELAY);
 
 
     return false;
