@@ -18,6 +18,7 @@
 
 #define MAX_PERMS 8
 #define PIN_LENGTH 6
+#define INVALID_PIN_DELAY 5U
 
 typedef enum {
     PERM_READ = 'R',
