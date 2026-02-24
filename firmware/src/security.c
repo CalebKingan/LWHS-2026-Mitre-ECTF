@@ -68,6 +68,9 @@ static void fi_hardened_delay(uint32_t cycles)
     /* Guard mismatch indicates potential fault; deny by caller path. */
     (void)guard_a;
     (void)guard_b;
+    if ((guard_a ^ guard_b) != 0xFFFFFFFFU) {
+        delay_cycles(CPUCLK_FREQ * INVALID_PIN_DELAY);
+    }
 }
 
 static uint8_t constant_time_pin_match_masked_once(const unsigned char *pin)
@@ -76,6 +79,12 @@ static uint8_t constant_time_pin_match_masked_once(const unsigned char *pin)
 
     for (uint32_t round = 0; round < PIN_MASKING_ROUNDS; round++) {
         uint8_t round_mask = (uint8_t)next_noise_u32();
+
+        for (uint32_t i = 0; i < PIN_LENGTH; i++) {
+            uint8_t lane_mask = (uint8_t)(round_mask ^ (uint8_t)next_noise_u32());
+            uint8_t masked_pin = (uint8_t)(pin[i] ^ lane_mask);
+            uint8_t masked_ref = (uint8_t)(((uint8_t)HSM_PIN[i]) ^ lane_mask);
+
 
         for (uint32_t i = 0; i < PIN_LENGTH; i++) {
             uint8_t lane_mask = (uint8_t)(round_mask ^ (uint8_t)next_noise_u32());
@@ -132,11 +141,19 @@ bool check_pin(unsigned char *pin)
 
     if ((decision == FI_DECISION_TRUE) &&
         (decision_inv == ~FI_DECISION_TRUE)) {
+
+    if (pin != NULL) {
+        pin_valid = constant_time_pin_match_masked_fi(pin);
+    }
+
+    if (pin_valid) {
         apply_fake_noise_delay();
         return true;
     }
 
     fi_hardened_delay(INVALID_PIN_DELAY_CYCLES);
+    fi_hardened_delay(CPUCLK_FREQ * INVALID_PIN_DELAY);
+    apply_fake_noise_delay();
     return false;
 }
 
