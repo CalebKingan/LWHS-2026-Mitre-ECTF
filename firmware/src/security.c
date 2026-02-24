@@ -16,15 +16,21 @@
 #include <string.h>
 #include "ti_msp_dl_config.h"
 
-bool check_pin(unsigned char *pin) {
-    if (!pin) return false;
+static bool constant_time_pin_match(const unsigned char *pin) {
+    uint8_t diff = 0;
 
-    // pin_t is 6 bytes, not null-terminated
-    if (memcmp(pin, HSM_PIN, PIN_LENGTH) == 0) return true;
+    for (uint32_t i = 0; i<PIN_LENGTH; i++)
+        diff |= (uint8_t)(pin[i] ^ (uint8_t)HSM_PIN[i]);
+   
+    return diff == 0;
+
+}
+
+bool check_pin(unsigned char *pin) {
+    if (pin && constant_time_pin_match(pin))
+            return true;
 
     delay_cycles(CPUCLK_FREQ * INVALID_PIN_DELAY);
-
-
     return false;
 }
 
