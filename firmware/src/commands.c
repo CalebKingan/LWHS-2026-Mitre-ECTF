@@ -15,6 +15,25 @@
 #include "commands.h"
 #include "filesystem.h"
 
+static bool is_name_sanitized(const char *name) {
+    bool has_terminator = false;
+
+    for (uint8_t i = 0; i < MAX_NAME_SIZE; i++) {
+        char c = name[i];
+
+        if (c == '\0') {
+            has_terminator = true;
+            continue;
+        }
+
+        if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) {
+            return false;
+        }
+    }
+
+    return has_terminator;
+}
+
 /* IMPORTANT COMPONENTS FROM HSM.c */
 // extern file_t hsm_status[MAX_FILE_COUNT];
 static file_t current_file;
@@ -60,6 +79,11 @@ void generate_list_files(list_response_t *file_list) {
  * @return 0 upon success. A negative value on error.
 */
 int list(uint16_t pkt_len, uint8_t *buf) {
+    if (pkt_len != sizeof(list_command_t)) {
+        print_error("Malformed list request");
+        return -1;
+    }
+
     list_command_t *command = (list_command_t*)buf;
     list_response_t file_list;
 
@@ -88,12 +112,22 @@ int list(uint16_t pkt_len, uint8_t *buf) {
  * @return 0 upon success. A negative value on error.
 */
 int read(uint16_t pkt_len, uint8_t *buf) {
+    if (pkt_len != sizeof(read_command_t)) {
+        print_error("Malformed read request");
+        return -1;
+    }
+
     read_command_t *command = (read_command_t*)buf;
     read_response_t file_info;
     file_t curr_file;
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
+        return -1;
+    }
+
+    if (command->slot >= MAX_FILE_COUNT) {
+        print_error("Invalid slot");
         return -1;
     }
 
@@ -131,6 +165,11 @@ int read(uint16_t pkt_len, uint8_t *buf) {
  * @return 0 upon success. A negative value on error.
 */
 int write(uint16_t pkt_len, uint8_t *buf) {
+    if (pkt_len < sizeof(write_command_t) - MAX_CONTENTS_SIZE) {
+        print_error("Malformed write request");
+        return -1;
+    }
+
     write_command_t *command = (write_command_t*)buf;
     int ret;
     file_t curr_file;
@@ -142,6 +181,26 @@ int write(uint16_t pkt_len, uint8_t *buf) {
 
     if (!validate_permission(command->group_id, PERM_WRITE)) {
         print_error("Invalid permission");
+        return -1;
+    }
+
+    if (command->slot >= MAX_FILE_COUNT) {
+        print_error("Invalid slot");
+        return -1;
+    }
+
+    if (command->contents_len > MAX_CONTENTS_SIZE) {
+        print_error("Invalid content size");
+        return -1;
+    }
+
+    if (pkt_len != (sizeof(write_command_t) - MAX_CONTENTS_SIZE + command->contents_len)) {
+        print_error("Mismatched write length");
+        return -1;
+    }
+
+    if (!is_name_sanitized(command->name)) {
+        print_error("Invalid file name");
         return -1;
     }
 
@@ -173,6 +232,11 @@ int write(uint16_t pkt_len, uint8_t *buf) {
  * @return 0 upon success. A negative value on error.
 */
 int receive(uint16_t pkt_len, uint8_t *buf) {
+    if (pkt_len != sizeof(receive_command_t)) {
+        print_error("Malformed receive request");
+        return -1;
+    }
+
     receive_command_t *command = (receive_command_t *)buf;
     receive_request_t request;
     receive_response_t recv_resp;
@@ -182,6 +246,11 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
+        return -1;
+    }
+
+    if (command->read_slot >= MAX_FILE_COUNT || command->write_slot >= MAX_FILE_COUNT) {
+        print_error("Invalid slot");
         return -1;
     }
 
@@ -240,6 +309,11 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
  * @return 0 upon success. A negative value on error.
  */
 int interrogate(uint16_t pkt_len, uint8_t *buf) {
+    if (pkt_len != sizeof(interrogate_command_t)) {
+        print_error("Malformed interrogate request");
+        return -1;
+    }
+
     interrogate_command_t *command = (interrogate_command_t*)buf;
     msg_type_t cmd;
     list_response_t final_list_buf;
@@ -333,7 +407,15 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             write_packet(TRANSFER_INTERFACE, INTERROGATE_MSG, &file_list, write_length);
             break;
         case RECEIVE_MSG: {
+            if (read_length != sizeof(receive_request_t)) {
+                SEND_TRANSFER_ERROR("Malformed receive transfer request");
+            }
+
             command = (receive_request_t *)uart_buf;
+
+            if (command->slot >= MAX_FILE_COUNT) {
+                SEND_TRANSFER_ERROR("Invalid slot in transfer request");
+            }
 
             // Read the requested file first so we know its group_id
             if (read_file(command->slot, &recv_resp.file) < 0) {
