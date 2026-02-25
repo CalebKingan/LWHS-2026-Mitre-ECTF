@@ -36,7 +36,7 @@ docker build -t build-hsm ./firmware`
 ### Building an HSM
 ---
 ```
-docker run --rm -v "$(pwd -W)\firmware:/hsm" -v "$(pwd -W)\global.secrets:/secrets/global.secrets:ro" -v "$(pwd -W)\build:/out" -e HSM_PIN=abc123 -e PERMISSIONS="1111=-W-" build-hsm` 
+docker run --rm -v "$(pwd -W)\firmware:/hsm" -v "$(pwd -W)\global.secrets:/secrets/global.secrets:ro" -v "$(pwd -W)\build:/out" -e HSM_PIN=abc123 -e PERMISSIONS="1111=-W-" build-hsm 
 ```
 ### Flashing an HSM
 ---
