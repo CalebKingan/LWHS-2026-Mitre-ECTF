@@ -30,7 +30,7 @@ uv venv
 source .venv/Scripts/activate
 uv pip install -e ./ectf26_design
 uv run secrets ./global.secrets 1 2 3 0x1111
-docker build -t build-hsm ./firmware`
+docker build -t build-hsm ./firmware
 ```
 
 ### Building an HSM
