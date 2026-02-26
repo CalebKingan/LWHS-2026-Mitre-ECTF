@@ -14,6 +14,7 @@
 #include "host_messaging.h"
 #include "commands.h"
 #include "filesystem.h"
+#include "crypto.h"
 
 static bool is_name_sanitized(const char *name) {
     bool has_terminator = false;
@@ -37,6 +38,41 @@ static bool is_name_sanitized(const char *name) {
 /* IMPORTANT COMPONENTS FROM HSM.c */
 // extern file_t hsm_status[MAX_FILE_COUNT];
 static file_t current_file;
+
+static void derive_transfer_key(uint8_t *key_out) {
+    const char transfer_key_seed[] = HSM_PIN;
+    const size_t seed_len = sizeof(transfer_key_seed) - 1U;
+
+    memset(key_out, 0, KEY_SIZE);
+    if (seed_len == 0U) {
+        return;
+    }
+
+    for (size_t i = 0; i < KEY_SIZE; i++) {
+        key_out[i] = (uint8_t)transfer_key_seed[i % seed_len];
+    }
+}
+
+static int transform_transfer_contents(uint8_t *contents, bool encrypting) {
+    uint8_t key[KEY_SIZE];
+    int result;
+
+    if (contents == NULL) {
+        return -1;
+    }
+
+    derive_transfer_key(key);
+    if (encrypting) {
+        result = encrypt_sym(contents, MAX_CONTENTS_SIZE, key, contents);
+    } else {
+        result = decrypt_sym(contents, MAX_CONTENTS_SIZE, key, contents);
+    }
+
+    if (result != 0) {
+        return result;
+    }
+    return 0;
+}
 
 /**********************************************************
  ******************** HELPER FUNCTIONS ********************
@@ -282,6 +318,11 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
         print_error("Opcode mismatch");
         return -1;
     }
+
+    if (transform_transfer_contents(recv_resp.file.contents, false) != 0) {
+        print_error("Failed to decrypt transfer contents");
+        return -1;
+    }
     
     // Enforce local receive permission before writing file
     if (!validate_permission(recv_resp.file.group_id, PERM_RECEIVE)) {
@@ -441,6 +482,10 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             }
 
             memcpy(&recv_resp.uuid, &metadata->uuid, UUID_SIZE);
+
+            if (transform_transfer_contents(recv_resp.file.contents, true) != 0) {
+                SEND_TRANSFER_ERROR("Failed to encrypt transfer contents");
+            }
 
             write_length = sizeof(receive_response_t);
             write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, &recv_resp, write_length);
