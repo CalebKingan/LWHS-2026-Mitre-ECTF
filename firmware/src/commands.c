@@ -85,18 +85,35 @@ static int transform_transfer_contents(uint8_t *contents, bool encrypting) {
  *      which to store the results
  */
 void generate_list_files(list_response_t *file_list) {
+    typedef struct {
+        uint32_t in_use;
+        group_id_t group_id;
+        char name[MAX_NAME_SIZE];
+    } file_list_header_t;
+
     file_list->n_files = 0;
-    file_t temp_file;
 
     // Loop through all files on the system
     for (uint8_t i = 0; i < MAX_FILE_COUNT; i++) {
-        // Check if the file is in use
-        if (is_slot_in_use(i)) {
-            read_file(i, &temp_file);
+        const filesystem_entry_t *entry = get_file_metadata(i);
+        file_list_header_t file_header;
 
+        if (entry == NULL || entry->length < sizeof(file_t) - MAX_CONTENTS_SIZE) {
+            continue;
+        }
+
+        if (entry->flash_addr == 0U || entry->flash_addr == 0xFFFFFFFFU) {
+            continue;
+        }
+
+        memset(&file_header, 0, sizeof(file_header));
+        flash_read(entry->flash_addr, &file_header, sizeof(file_header));
+
+        // Check if the file is in use using header metadata only.
+        if (file_header.in_use == FILE_IN_USE) {
             file_list->metadata[file_list->n_files].slot = i;
-            file_list->metadata[file_list->n_files].group_id = temp_file.group_id;
-            memcpy(file_list->metadata[file_list->n_files].name, temp_file.name, MAX_NAME_SIZE);
+            file_list->metadata[file_list->n_files].group_id = file_header.group_id;
+            memcpy(file_list->metadata[file_list->n_files].name, file_header.name, MAX_NAME_SIZE);
             file_list->n_files++;
         }
     }
