@@ -18,6 +18,17 @@
 #include <stdint.h>
 #include <string.h>
 
+static void derive_iv(uint8_t *key, uint8_t *iv) {
+    uint8_t full_hash[WC_SHA256_DIGEST_SIZE] = {0};
+
+    /*
+     * Derive a non-zero IV from the key material so we can avoid ECB mode
+     * without changing the external function signatures.
+     */
+    wc_Sha256Hash(key, KEY_SIZE, full_hash);
+    memcpy(iv, full_hash, BLOCK_SIZE);
+}
+
 
 /******************************** FUNCTION PROTOTYPES ********************************/
 /** @brief Encrypts plaintext using a symmetric cipher
@@ -35,25 +46,24 @@
  */
 int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertext) {
     Aes ctx; // Context for encryption
+    uint8_t iv[BLOCK_SIZE] = {0};
     int result; // Library result
 
     // Ensure valid length
-    if (len <= 0 || len % BLOCK_SIZE)
+    if (!plaintext || !key || !ciphertext)
         return -1;
 
+    if (len == 0 || len % BLOCK_SIZE)
+        return -1;
+
+    derive_iv(key, iv);
+
     // Set the key for encryption
-    result = wc_AesSetKey(&ctx, key, 16, NULL, AES_ENCRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, iv, AES_ENCRYPTION);
     if (result != 0)
         return result; // Report error
 
-
-    // Encrypt each block
-    for (int i = 0; i < len - 1; i += BLOCK_SIZE) {
-        result = wc_AesEncryptDirect(&ctx, ciphertext + i, plaintext + i);
-        if (result != 0)
-            return result; // Report error
-    }
-    return 0;
+    return wc_AesCbcEncrypt(&ctx, ciphertext, plaintext, len);
 }
 
 /** @brief Decrypts ciphertext using a symmetric cipher
@@ -71,24 +81,24 @@ int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertex
  */
 int decrypt_sym(uint8_t *ciphertext, size_t len, uint8_t *key, uint8_t *plaintext) {
     Aes ctx; // Context for decryption
+    uint8_t iv[BLOCK_SIZE] = {0};
     int result; // Library result
 
     // Ensure valid length
-    if (len <= 0 || len % BLOCK_SIZE)
+    if (!ciphertext || !key || !plaintext)
         return -1;
 
+    if (len == 0 || len % BLOCK_SIZE)
+        return -1;
+
+    derive_iv(key, iv);
+
     // Set the key for decryption
-    result = wc_AesSetKey(&ctx, key, 16, NULL, AES_DECRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, iv, AES_DECRYPTION);
     if (result != 0)
         return result; // Report error
 
-    // Decrypt each block
-    for (int i = 0; i < len - 1; i += BLOCK_SIZE) {
-        result = wc_AesDecryptDirect(&ctx, plaintext + i, ciphertext + i);
-        if (result != 0)
-            return result; // Report error
-    }
-    return 0;
+    return wc_AesCbcDecrypt(&ctx, plaintext, ciphertext, len);
 }
 
 /** @brief Hashes arbitrary-length data
@@ -96,14 +106,16 @@ int decrypt_sym(uint8_t *ciphertext, size_t len, uint8_t *key, uint8_t *plaintex
  * @param data A pointer to a buffer of length len containing the data
  *          to be hashed
  * @param len The length of the plaintext to hash
- * @param hash_out A pointer to a buffer of length HASH_SIZE (16 bytes) where the resulting
+ * @param hash_out A pointer to a buffer of length HASH_SIZE (32 bytes) where the resulting
  *          hash output will be written to
  *
  * @return 0 on success, non-zero for other error
  */
 int hash(void *data, size_t len, uint8_t *hash_out) {
-    // Pass values to hash
-    return wc_Md5Hash((uint8_t *)data, len, hash_out);
+    if (!data || !hash_out)
+        return -1;
+
+    return wc_Sha256Hash((uint8_t *)data, len, hash_out);
 }
 
 #endif
