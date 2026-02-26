@@ -29,7 +29,6 @@ OBJECTS += $(BUILDDIR)/crypto.so
 # change C flags
 CFLAGS += -DCRYPTO_EXAMPLE=1
 CFLAGS += -DNO_WOLFSSL_DIR
-CFLAGS += -DWOLFSSL_AES_DIRECT
 CFLAGS += -DSINGLE_THREADED
 # From https://www.wolfssl.com/documentation/manuals/wolfssl/chapter02.html#building-with-gcc-arm
 CFLAGS += -DHAVE_PK_CALLBACKS
@@ -47,7 +46,7 @@ CFLAGS += -I./wolfssl
 
 # we need to build these objects for the crypto
 OBJECTS += $(WOLFSSL_INC)/aes.o $(WOLFSSL_INC)/hash.o
-OBJECTS += $(WOLFSSL_INC)/md5.o $(WOLFSSL_INC)/cryptocb.o
+OBJECTS += $(WOLFSSL_INC)/sha256.o $(WOLFSSL_INC)/cryptocb.o
 endif
 
 NAME = hsm
