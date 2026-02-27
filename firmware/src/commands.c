@@ -38,6 +38,7 @@ static bool is_name_sanitized(const char *name) {
 /* IMPORTANT COMPONENTS FROM HSM.c */
 // extern file_t hsm_status[MAX_FILE_COUNT];
 static file_t current_file;
+static read_response_t read_file_response;
 static receive_response_t transfer_file_response;
 
 static void derive_transfer_key(uint8_t *key_out) {
@@ -172,7 +173,6 @@ int read(uint16_t pkt_len, uint8_t *buf) {
     }
 
     read_command_t *command = (read_command_t*)buf;
-    read_response_t file_info;
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
@@ -185,18 +185,18 @@ int read(uint16_t pkt_len, uint8_t *buf) {
     }
 
     // zeroizing memory is a pretty good practice
-    memset(&file_info, 0, sizeof(read_response_t));
+    memset(&read_file_response, 0, sizeof(read_response_t));
 
     if (read_file(command->slot, &current_file) < 0) {
         print_error("Failed to read file");
         return -1;
     }
     // copy structure of the persistent file
-    memcpy(file_info.name, &current_file.name, MAX_NAME_SIZE);
+    memcpy(read_file_response.name, &current_file.name, MAX_NAME_SIZE);
     uint16_t out_len = current_file.contents_len;
     if (out_len > MAX_CONTENTS_SIZE) out_len = MAX_CONTENTS_SIZE;
 
-    memcpy(file_info.contents, current_file.contents, out_len);
+    memcpy(read_file_response.contents, current_file.contents, out_len);
     pkt_len_t length = MAX_NAME_SIZE + out_len;
 
     if (!validate_permission(current_file.group_id, PERM_READ)) {
@@ -205,7 +205,7 @@ int read(uint16_t pkt_len, uint8_t *buf) {
     }
 
     // write a success message with the file information
-    write_packet(CONTROL_INTERFACE, READ_MSG, &file_info, length);
+    write_packet(CONTROL_INTERFACE, READ_MSG, &read_file_response, length);
     return 0;
 }
 
