@@ -224,8 +224,6 @@ int write(uint16_t pkt_len, uint8_t *buf) {
     }
 
     write_command_t *command = (write_command_t*)buf;
-    int ret;
-    file_t curr_file;
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
@@ -258,7 +256,7 @@ int write(uint16_t pkt_len, uint8_t *buf) {
     }
 
     create_file(
-        &curr_file,
+        &current_file,
         command->group_id,
         command->name,
         command->contents_len,
@@ -266,7 +264,7 @@ int write(uint16_t pkt_len, uint8_t *buf) {
     );
 
     // Store the file persistently
-    if (write_file(command->slot, &curr_file, command->uuid) < 0) {
+    if (write_file(command->slot, &current_file, command->uuid) < 0) {
         print_error("Error storing file");
         return -1;
     }
