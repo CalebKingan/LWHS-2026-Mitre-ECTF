@@ -150,6 +150,7 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     uint16_t original_len;
     uint16_t padded_len;
     int crypto_result;
+    file_t file_to_store;
 
     if (!is_slot_valid(slot) || src == NULL || uuid == NULL)
         return -1;
@@ -157,26 +158,28 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     if (src->contents_len > MAX_CONTENTS_SIZE)
         return -1;
 
-    original_len = src->contents_len;
+    memcpy(&file_to_store, src, sizeof(file_t));
+
+    original_len = file_to_store.contents_len;
     padded_len = round_up_block(original_len);
     if (padded_len > MAX_CONTENTS_SIZE)
         return -1;
 
     if (padded_len > 0U) {
         if (padded_len > original_len) {
-            memset(src->contents + original_len, 0, padded_len - original_len);
+            memset(file_to_store.contents + original_len, 0, padded_len - original_len);
         }
 
         derive_storage_key(key);
-        crypto_result = encrypt_sym(src->contents, padded_len, key, src->contents);
+        crypto_result = encrypt_sym(file_to_store.contents, padded_len, key, file_to_store.contents);
         if (crypto_result != 0) {
             return -1;
         }
-        src->contents_len = padded_len;
+        file_to_store.contents_len = padded_len;
     }
 
     flash_addr = FILE_START_PAGE_FROM_SLOT(slot);
-    length = FILE_TOTAL_SIZE(src->contents_len);
+    length = FILE_TOTAL_SIZE(file_to_store.contents_len);
 
     if (length > STORED_FILE_SIZE)
         return -1;
@@ -198,7 +201,7 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     }
 
     // now write the file
-    return flash_write(FILE_ALLOCATION_TABLE[slot].flash_addr, src, length);
+    return flash_write(FILE_ALLOCATION_TABLE[slot].flash_addr, &file_to_store, length);
 }
 
 /** @brief Read a file from persistent storage into memory
