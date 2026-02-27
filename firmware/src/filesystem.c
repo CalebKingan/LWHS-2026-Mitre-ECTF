@@ -28,6 +28,13 @@ static uint16_t round_up_block(uint16_t len) {
     return (uint16_t)((len + (BLOCK_SIZE - 1U)) / BLOCK_SIZE) * BLOCK_SIZE;
 }
 
+/*
+ * Reusable scratch buffer for persistent writes.
+ * Keep this out of the stack to avoid large frame usage when handling write
+ * commands with MAX_CONTENTS_SIZE payloads.
+ */
+static file_t write_scratch;
+
 static void derive_storage_key(uint8_t *key_out) {
     const char key_seed[] = HSM_PIN;
     const size_t seed_len = sizeof(key_seed) - 1U;
@@ -150,7 +157,7 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     uint16_t original_len;
     uint16_t padded_len;
     int crypto_result;
-    file_t file_to_store;
+    file_t *file_to_store = &write_scratch;
 
     if (!is_slot_valid(slot) || src == NULL || uuid == NULL)
         return -1;
@@ -158,28 +165,28 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     if (src->contents_len > MAX_CONTENTS_SIZE)
         return -1;
 
-    memcpy(&file_to_store, src, sizeof(file_t));
+    memcpy(file_to_store, src, sizeof(file_t));
 
-    original_len = file_to_store.contents_len;
+    original_len = file_to_store->contents_len;
     padded_len = round_up_block(original_len);
     if (padded_len > MAX_CONTENTS_SIZE)
         return -1;
 
     if (padded_len > 0U) {
         if (padded_len > original_len) {
-            memset(file_to_store.contents + original_len, 0, padded_len - original_len);
+            memset(file_to_store->contents + original_len, 0, padded_len - original_len);
         }
 
         derive_storage_key(key);
-        crypto_result = encrypt_sym(file_to_store.contents, padded_len, key, file_to_store.contents);
+        crypto_result = encrypt_sym(file_to_store->contents, padded_len, key, file_to_store->contents);
         if (crypto_result != 0) {
             return -1;
         }
-        file_to_store.contents_len = padded_len;
+        file_to_store->contents_len = padded_len;
     }
 
     flash_addr = FILE_START_PAGE_FROM_SLOT(slot);
-    length = FILE_TOTAL_SIZE(file_to_store.contents_len);
+    length = FILE_TOTAL_SIZE(file_to_store->contents_len);
 
     if (length > STORED_FILE_SIZE)
         return -1;
@@ -201,7 +208,7 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     }
 
     // now write the file
-    return flash_write(FILE_ALLOCATION_TABLE[slot].flash_addr, &file_to_store, length);
+    return flash_write(FILE_ALLOCATION_TABLE[slot].flash_addr, file_to_store, length);
 }
 
 /** @brief Read a file from persistent storage into memory
