@@ -81,7 +81,19 @@ typedef struct {
 typedef struct {
     uint8_t uuid[UUID_SIZE];
     file_t file;
+} receive_plaintext_t;
+
+typedef struct {
+    uint32_t nonce;
+    uint8_t ciphertext[sizeof(receive_plaintext_t)];
+    uint32_t tag;
 } receive_response_t;
+
+typedef struct {
+    uint32_t nonce;
+    uint8_t ciphertext[sizeof(receive_request_t)];
+    uint32_t tag;
+} receive_request_secure_t;
 
 typedef struct {
     pin_t pin;

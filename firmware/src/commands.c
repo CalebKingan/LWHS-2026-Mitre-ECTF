@@ -14,6 +14,7 @@
 #include "host_messaging.h"
 #include "commands.h"
 #include "filesystem.h"
+#include "data_crypto.h"
 
 static bool is_name_sanitized(const char *name) {
     bool has_terminator = false;
@@ -37,6 +38,24 @@ static bool is_name_sanitized(const char *name) {
 /* IMPORTANT COMPONENTS FROM HSM.c */
 // extern file_t hsm_status[MAX_FILE_COUNT];
 static file_t current_file;
+
+
+static uint8_t transfer_key[DATA_CRYPTO_KEY_SIZE];
+static bool transfer_key_ready = false;
+
+static void ensure_transfer_key(void)
+{
+    if (!transfer_key_ready) {
+        derive_data_key("hsm-transfer", transfer_key);
+        transfer_key_ready = true;
+    }
+}
+
+static uint32_t transfer_nonce_seed(uint16_t left, uint16_t right)
+{
+    return 0x51A3C77DU ^ ((uint32_t)left << 16U) ^ (uint32_t)right;
+}
+
 
 /**********************************************************
  ******************** HELPER FUNCTIONS ********************
@@ -239,7 +258,9 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
 
     receive_command_t *command = (receive_command_t *)buf;
     receive_request_t request;
+    receive_request_secure_t secure_request;
     receive_response_t recv_resp;
+    receive_plaintext_t plaintext;
     msg_type_t cmd;
     uint16_t len_recv_msg;
     int ret;
@@ -256,14 +277,21 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
 
     // zeroize the buffers we will use
     memset(&recv_resp, 0, sizeof(recv_resp));
+    memset(&plaintext, 0, sizeof(plaintext));
     memset(&request, 0, sizeof(request));
+    memset(&secure_request, 0, sizeof(secure_request));
+    ensure_transfer_key();
 
-    // prep request to neighbor
+    // prep encrypted request to neighbor
     request.slot = command->read_slot;
     memcpy(&request.permissions, &global_permissions, sizeof(group_permission_t) * MAX_PERMS);
+    secure_request.nonce = transfer_nonce_seed(command->read_slot, command->write_slot);
+    memcpy(secure_request.ciphertext, &request, sizeof(request));
+    crypt_buffer(secure_request.ciphertext, sizeof(request), transfer_key, secure_request.nonce);
+    secure_request.tag = keyed_mac32(secure_request.ciphertext, sizeof(request), transfer_key, secure_request.nonce);
 
     // request the file from the neighboring device
-    write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, (void *)&request, sizeof(receive_request_t));
+    write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, (void *)&secure_request, sizeof(secure_request));
 
     // limits receiving message size
     len_recv_msg = sizeof(recv_resp);
@@ -283,15 +311,23 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
         return -1;
     }
     
+    if (recv_resp.tag != keyed_mac32(recv_resp.ciphertext, sizeof(recv_resp.ciphertext), transfer_key, recv_resp.nonce)) {
+        print_error("Receive response authentication failed");
+        return -1;
+    }
+
+    memcpy(&plaintext, recv_resp.ciphertext, sizeof(plaintext));
+    crypt_buffer((uint8_t *)&plaintext, sizeof(plaintext), transfer_key, recv_resp.nonce);
+
     // Enforce local receive permission before writing file
-    if (!validate_permission(recv_resp.file.group_id, PERM_RECEIVE)) {
+    if (!validate_permission(plaintext.file.group_id, PERM_RECEIVE)) {
         print_error("Permission denied: cannot receive this group");
         return -1;
     }
 
 
     // write that file into the file system
-    if (write_file(command->write_slot, &recv_resp.file, recv_resp.uuid) < 0) {
+    if (write_file(command->write_slot, &plaintext.file, plaintext.uuid) < 0) {
         print_error("Writing received file failed");
         return -1;
     }
@@ -369,11 +405,13 @@ int interrogate(uint16_t pkt_len, uint8_t *buf) {
  * @return 0 upon success. A negative value on error.
 */
 int listen(uint16_t pkt_len, uint8_t *buf) {
-    uint8_t uart_buf[sizeof(receive_request_t)];
+    uint8_t uart_buf[sizeof(receive_request_secure_t)];
     msg_type_t cmd;
     pkt_len_t write_length, read_length;
     list_response_t file_list;
-    receive_request_t *command;
+    receive_request_t command_plain;
+    receive_request_secure_t *command;
+    receive_plaintext_t send_plain;
     receive_response_t recv_resp;
     const filesystem_entry_t *metadata;
 
@@ -407,26 +445,34 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             write_packet(TRANSFER_INTERFACE, INTERROGATE_MSG, &file_list, write_length);
             break;
         case RECEIVE_MSG: {
-            if (read_length != sizeof(receive_request_t)) {
+            if (read_length != sizeof(receive_request_secure_t)) {
                 SEND_TRANSFER_ERROR("Malformed receive transfer request");
             }
 
-            command = (receive_request_t *)uart_buf;
+            ensure_transfer_key();
+            command = (receive_request_secure_t *)uart_buf;
 
-            if (command->slot >= MAX_FILE_COUNT) {
+            if (command->tag != keyed_mac32(command->ciphertext, sizeof(command->ciphertext), transfer_key, command->nonce)) {
+                SEND_TRANSFER_ERROR("Receive transfer request authentication failed");
+            }
+
+            memcpy(&command_plain, command->ciphertext, sizeof(command_plain));
+            crypt_buffer((uint8_t *)&command_plain, sizeof(command_plain), transfer_key, command->nonce);
+
+            if (command_plain.slot >= MAX_FILE_COUNT) {
                 SEND_TRANSFER_ERROR("Invalid slot in transfer request");
             }
 
             // Read the requested file first so we know its group_id
-            if (read_file(command->slot, &recv_resp.file) < 0) {
+            if (read_file(command_plain.slot, &send_plain.file) < 0) {
                 SEND_TRANSFER_ERROR("Failed to read file");
             }
 
             // Enforce requester's RECEIVE permission before sending file
             bool allowed = false;
             for (int i = 0; i < MAX_PERMS; i++) {
-                if (command->permissions[i].group_id == recv_resp.file.group_id &&
-                    command->permissions[i].receive) {
+                if (command_plain.permissions[i].group_id == send_plain.file.group_id &&
+                    command_plain.permissions[i].receive) {
                     allowed = true;
                     break;
                 }
@@ -435,12 +481,18 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
                 SEND_TRANSFER_ERROR("Requester lacks RECEIVE permission for this group");
             }
 
-            metadata = get_file_metadata(command->slot);
+            metadata = get_file_metadata(command_plain.slot);
             if (metadata == NULL) {
                 SEND_TRANSFER_ERROR("Getting metadata failed");
             }
 
-            memcpy(&recv_resp.uuid, &metadata->uuid, UUID_SIZE);
+            memset(&recv_resp, 0, sizeof(recv_resp));
+            memset(&send_plain.uuid, 0, UUID_SIZE);
+            memcpy(&send_plain.uuid, &metadata->uuid, UUID_SIZE);
+            recv_resp.nonce = transfer_nonce_seed(command_plain.slot, send_plain.file.group_id);
+            memcpy(recv_resp.ciphertext, &send_plain, sizeof(send_plain));
+            crypt_buffer(recv_resp.ciphertext, sizeof(recv_resp.ciphertext), transfer_key, recv_resp.nonce);
+            recv_resp.tag = keyed_mac32(recv_resp.ciphertext, sizeof(recv_resp.ciphertext), transfer_key, recv_resp.nonce);
 
             write_length = sizeof(receive_response_t);
             write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, &recv_resp, write_length);

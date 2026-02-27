@@ -15,6 +15,24 @@
 
 #include "filesystem.h"
 #include "flash.h"
+#include "data_crypto.h"
+
+static uint8_t fs_key[DATA_CRYPTO_KEY_SIZE];
+static bool fs_key_ready = false;
+
+static void ensure_fs_key(void)
+{
+    if (!fs_key_ready) {
+        derive_data_key("fs-at-rest", fs_key);
+        fs_key_ready = true;
+    }
+}
+
+static uint32_t slot_nonce(slot_t slot, const uint8_t *uuid)
+{
+    return ((uint32_t)uuid[0] << 24U) ^ ((uint32_t)uuid[1] << 16U) ^
+           ((uint32_t)uuid[2] << 8U) ^ (uint32_t)uuid[3] ^ ((uint32_t)slot << 20U) ^ 0xC0DEC0DEU;
+}
 
 static bool is_slot_valid(slot_t slot){
     return slot < MAX_FILE_COUNT;
@@ -61,6 +79,7 @@ int store_fat() {
  * @return 0 upon success. A negative value on error.
 */
 int init_fs() {
+    ensure_fs_key();
     return load_fat();
 }
 
@@ -120,6 +139,10 @@ int create_file(
 */
 int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     unsigned int length, flash_addr;
+    uint32_t nonce;
+    uint32_t tag;
+    ensure_fs_key();
+
     if (!is_slot_valid(slot) || src == NULL || uuid == NULL)
         return -1;
 
@@ -139,8 +162,13 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     
     
     memcpy(&FILE_ALLOCATION_TABLE[slot].uuid, uuid, UUID_SIZE);
+    nonce = slot_nonce(slot, uuid);
     FILE_ALLOCATION_TABLE[slot].flash_addr = flash_addr;
     FILE_ALLOCATION_TABLE[slot].length = length;
+
+    crypt_buffer((uint8_t *)src, length, fs_key, nonce);
+    tag = keyed_mac32((const uint8_t *)src, length, fs_key, nonce);
+    FILE_ALLOCATION_TABLE[slot].padding = (uint16_t)(tag & 0xFFFFU);
     store_fat();
 
     // erase the pages that will store the file
@@ -161,18 +189,32 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
 */
 int read_file(slot_t slot, file_t *dest) {
     uint32_t flash_addr, file_size;
+    uint32_t nonce;
+    uint32_t tag;
+    const filesystem_entry_t *entry;
+
+    ensure_fs_key();
 
     if (!is_slot_valid(slot) || dest == NULL)
         return -1;
     
 
-    flash_addr = FILE_ALLOCATION_TABLE[slot].flash_addr;
-    file_size = FILE_ALLOCATION_TABLE[slot].length;
+    entry = &FILE_ALLOCATION_TABLE[slot];
+    flash_addr = entry->flash_addr;
+    file_size = entry->length;
 
     if(!is_valid_file_region(flash_addr, file_size))
         return -1;
     
     flash_read(flash_addr, dest, file_size);
+
+    nonce = slot_nonce(slot, (const uint8_t *)entry->uuid);
+    tag = keyed_mac32((const uint8_t *)dest, file_size, fs_key, nonce);
+
+    if (((uint16_t)(tag & 0xFFFFU)) != entry->padding)
+        return -1;
+
+    crypt_buffer((uint8_t *)dest, file_size, fs_key, nonce);
 
     return 0;
 }

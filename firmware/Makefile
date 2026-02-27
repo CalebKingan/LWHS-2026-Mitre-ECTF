@@ -11,7 +11,7 @@ LINKERFILE = "firmware.ld"
 
 # to download wolfssl for the crypto , `cd ./firmware/ && git clone https://github.com/wolfSSL/wolfssl`
 # then set this variable to 1
-CRYPTO_EXAMPLE = 0
+CRYPTO_EXAMPLE = 1
 
 OBJECTS = $(BUILDDIR)/HSM.so \
     $(BUILDDIR)/uart.so \
@@ -21,6 +21,7 @@ OBJECTS = $(BUILDDIR)/HSM.so \
     $(BUILDDIR)/host_messaging.so \
     $(BUILDDIR)/security.so \
     $(BUILDDIR)/filesystem.so \
+    $(BUILDDIR)/data_crypto.so \
     $(BUILDDIR)/commands.so
 
 ifeq ($(CRYPTO_EXAMPLE), 1)
