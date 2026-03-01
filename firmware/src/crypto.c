@@ -14,18 +14,6 @@
 #include "crypto.h"
 #include "security.h"
 #include <stdint.h>
-#include <string.h>
-
-static void derive_iv(uint8_t *key, uint8_t *iv) {
-    uint8_t full_hash[WC_SHA256_DIGEST_SIZE] = {0};
-
-    /*
-     * Derive a non-zero IV from the key material so we can avoid ECB mode
-     * without changing the external function signatures.
-     */
-    wc_Sha256Hash(key, KEY_SIZE, full_hash);
-    memcpy(iv, full_hash, BLOCK_SIZE);
-}
 
 
 /******************************** FUNCTION PROTOTYPES ********************************/
@@ -44,7 +32,6 @@ static void derive_iv(uint8_t *key, uint8_t *iv) {
  */
 int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertext) {
     Aes ctx; // Context for encryption
-    uint8_t iv[BLOCK_SIZE] = {0};
     int result; // Library result
 
     // Ensure valid length
@@ -54,14 +41,12 @@ int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertex
     if (len == 0 || len % BLOCK_SIZE)
         return -1;
 
-    derive_iv(key, iv);
-
     // Set the key for encryption
-    result = wc_AesSetKey(&ctx, key, KEY_SIZE, iv, AES_ENCRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, NULL, AES_ENCRYPTION);
     if (result != 0)
         return result; // Report error
 
-    return wc_AesCbcEncrypt(&ctx, ciphertext, plaintext, len);
+    return wc_AesEcbEncrypt(&ctx, ciphertext, plaintext, len);
 }
 
 /** @brief Decrypts ciphertext using a symmetric cipher
@@ -79,7 +64,6 @@ int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertex
  */
 int decrypt_sym(uint8_t *ciphertext, size_t len, uint8_t *key, uint8_t *plaintext) {
     Aes ctx; // Context for decryption
-    uint8_t iv[BLOCK_SIZE] = {0};
     int result; // Library result
 
     // Ensure valid length
@@ -89,14 +73,12 @@ int decrypt_sym(uint8_t *ciphertext, size_t len, uint8_t *key, uint8_t *plaintex
     if (len == 0 || len % BLOCK_SIZE)
         return -1;
 
-    derive_iv(key, iv);
-
     // Set the key for decryption
-    result = wc_AesSetKey(&ctx, key, KEY_SIZE, iv, AES_DECRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, NULL, AES_DECRYPTION);
     if (result != 0)
         return result; // Report error
 
-    return wc_AesCbcDecrypt(&ctx, plaintext, ciphertext, len);
+    return wc_AesEcbDecrypt(&ctx, plaintext, ciphertext, len);
 }
 
 /** @brief Hashes arbitrary-length data
