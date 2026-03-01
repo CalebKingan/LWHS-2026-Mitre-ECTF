@@ -41,12 +41,14 @@ int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertex
     if (len == 0 || len % BLOCK_SIZE)
         return -1;
 
+    static const uint8_t zero_iv[BLOCK_SIZE] = {0};
+
     // Set the key for encryption
-    result = wc_AesSetKey(&ctx, key, KEY_SIZE, NULL, AES_ENCRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, zero_iv, AES_ENCRYPTION);
     if (result != 0)
         return result; // Report error
 
-    return wc_AesEcbEncrypt(&ctx, ciphertext, plaintext, len);
+    return wc_AesCbcEncrypt(&ctx, ciphertext, plaintext, len);
 }
 
 /** @brief Decrypts ciphertext using a symmetric cipher
@@ -73,12 +75,14 @@ int decrypt_sym(uint8_t *ciphertext, size_t len, uint8_t *key, uint8_t *plaintex
     if (len == 0 || len % BLOCK_SIZE)
         return -1;
 
+    static const uint8_t zero_iv[BLOCK_SIZE] = {0};
+
     // Set the key for decryption
-    result = wc_AesSetKey(&ctx, key, KEY_SIZE, NULL, AES_DECRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, zero_iv, AES_DECRYPTION);
     if (result != 0)
         return result; // Report error
 
-    return wc_AesEcbDecrypt(&ctx, plaintext, ciphertext, len);
+    return wc_AesCbcDecrypt(&ctx, plaintext, ciphertext, len);
 }
 
 /** @brief Hashes arbitrary-length data
