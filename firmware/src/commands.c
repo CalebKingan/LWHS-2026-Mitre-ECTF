@@ -37,6 +37,7 @@ static bool is_name_sanitized(const char *name) {
 
 /* IMPORTANT COMPONENTS FROM HSM.c */
 // extern file_t hsm_status[MAX_FILE_COUNT];
+static file_t current_file;
 static union {
     read_response_t read_file_response;
     receive_response_t transfer_file_response;
@@ -168,8 +169,6 @@ int list(uint16_t pkt_len, uint8_t *buf) {
  * @return 0 upon success. A negative value on error.
 */
 int read(uint16_t pkt_len, uint8_t *buf) {
-    file_t current_file;
-
     if (pkt_len != sizeof(read_command_t)) {
         print_error("Malformed read request");
         return -1;
@@ -221,8 +220,6 @@ int read(uint16_t pkt_len, uint8_t *buf) {
  * @return 0 upon success. A negative value on error.
 */
 int write(uint16_t pkt_len, uint8_t *buf) {
-    file_t current_file;
-
     if (pkt_len < sizeof(write_command_t) - MAX_CONTENTS_SIZE) {
         print_error("Malformed write request");
         return -1;
