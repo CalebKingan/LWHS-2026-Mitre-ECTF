@@ -21,6 +21,8 @@
 
 #define FILE_ENCRYPTED_FLAG 0x8000U
 
+filesystem_entry_t FILE_ALLOCATION_TABLE[MAX_FILE_COUNT];
+
 static uint16_t round_up_block(uint16_t len) {
     if (len == 0U) {
         return 0U;
