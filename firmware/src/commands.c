@@ -38,8 +38,10 @@ static bool is_name_sanitized(const char *name) {
 /* IMPORTANT COMPONENTS FROM HSM.c */
 // extern file_t hsm_status[MAX_FILE_COUNT];
 static file_t current_file;
-static read_response_t read_file_response;
-static receive_response_t transfer_file_response;
+static union {
+    read_response_t read_file_response;
+    receive_response_t transfer_file_response;
+} command_io_buffer;
 
 static void derive_transfer_key(uint8_t *key_out) {
     const char transfer_key_seed[] = HSM_PIN;
@@ -185,18 +187,18 @@ int read(uint16_t pkt_len, uint8_t *buf) {
     }
 
     // zeroizing memory is a pretty good practice
-    memset(&read_file_response, 0, sizeof(read_response_t));
+    memset(&command_io_buffer.read_file_response, 0, sizeof(read_response_t));
 
     if (read_file(command->slot, &current_file) < 0) {
         print_error("Failed to read file");
         return -1;
     }
     // copy structure of the persistent file
-    memcpy(read_file_response.name, &current_file.name, MAX_NAME_SIZE);
+    memcpy(command_io_buffer.read_file_response.name, &current_file.name, MAX_NAME_SIZE);
     uint16_t out_len = current_file.contents_len;
     if (out_len > MAX_CONTENTS_SIZE) out_len = MAX_CONTENTS_SIZE;
 
-    memcpy(read_file_response.contents, current_file.contents, out_len);
+    memcpy(command_io_buffer.read_file_response.contents, current_file.contents, out_len);
     pkt_len_t length = MAX_NAME_SIZE + out_len;
 
     if (!validate_permission(current_file.group_id, PERM_READ)) {
@@ -205,7 +207,7 @@ int read(uint16_t pkt_len, uint8_t *buf) {
     }
 
     // write a success message with the file information
-    write_packet(CONTROL_INTERFACE, READ_MSG, &read_file_response, length);
+    write_packet(CONTROL_INTERFACE, READ_MSG, &command_io_buffer.read_file_response, length);
     return 0;
 }
 
@@ -304,7 +306,7 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
     }
 
     // zeroize the buffers we will use
-    memset(&transfer_file_response, 0, sizeof(transfer_file_response));
+    memset(&command_io_buffer.transfer_file_response, 0, sizeof(command_io_buffer.transfer_file_response));
     memset(&request, 0, sizeof(request));
 
     // prep request to neighbor
@@ -315,14 +317,14 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
     write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, (void *)&request, sizeof(receive_request_t));
 
     // limits receiving message size
-    len_recv_msg = sizeof(transfer_file_response);
+    len_recv_msg = sizeof(command_io_buffer.transfer_file_response);
 
     //receive the response message
-    if (read_packet(TRANSFER_INTERFACE, &cmd, &transfer_file_response, &len_recv_msg) != MSG_OK) {
+    if (read_packet(TRANSFER_INTERFACE, &cmd, &command_io_buffer.transfer_file_response, &len_recv_msg) != MSG_OK) {
         print_error("Failed to receive response");
         return -1;
     }
-    if (len_recv_msg != sizeof(transfer_file_response)){
+    if (len_recv_msg != sizeof(command_io_buffer.transfer_file_response)){
          print_error("Malformed recieved response length");
         return -1;
     }
@@ -332,20 +334,20 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
         return -1;
     }
 
-    if (transform_transfer_contents(transfer_file_response.file.contents, false) != 0) {
+    if (transform_transfer_contents(command_io_buffer.transfer_file_response.file.contents, false) != 0) {
         print_error("Failed to decrypt transfer contents");
         return -1;
     }
     
     // Enforce local receive permission before writing file
-    if (!validate_permission(transfer_file_response.file.group_id, PERM_RECEIVE)) {
+    if (!validate_permission(command_io_buffer.transfer_file_response.file.group_id, PERM_RECEIVE)) {
         print_error("Permission denied: cannot receive this group");
         return -1;
     }
 
 
     // write that file into the file system
-    if (write_file(command->write_slot, &transfer_file_response.file, transfer_file_response.uuid) < 0) {
+    if (write_file(command->write_slot, &command_io_buffer.transfer_file_response.file, command_io_buffer.transfer_file_response.uuid) < 0) {
         print_error("Writing received file failed");
         return -1;
     }
@@ -471,14 +473,14 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             }
 
             // Read the requested file first so we know its group_id
-            if (read_file(command->slot, &transfer_file_response.file) < 0) {
+            if (read_file(command->slot, &command_io_buffer.transfer_file_response.file) < 0) {
                 SEND_TRANSFER_ERROR("Failed to read file");
             }
 
             // Enforce requester's RECEIVE permission before sending file
             bool allowed = false;
             for (int i = 0; i < MAX_PERMS; i++) {
-                if (command->permissions[i].group_id == transfer_file_response.file.group_id &&
+                if (command->permissions[i].group_id == command_io_buffer.transfer_file_response.file.group_id &&
                     command->permissions[i].receive) {
                     allowed = true;
                     break;
@@ -493,14 +495,14 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
                 SEND_TRANSFER_ERROR("Getting metadata failed");
             }
 
-            memcpy(&transfer_file_response.uuid, &metadata->uuid, UUID_SIZE);
+            memcpy(&command_io_buffer.transfer_file_response.uuid, &metadata->uuid, UUID_SIZE);
 
-            if (transform_transfer_contents(transfer_file_response.file.contents, true) != 0) {
+            if (transform_transfer_contents(command_io_buffer.transfer_file_response.file.contents, true) != 0) {
                 SEND_TRANSFER_ERROR("Failed to encrypt transfer contents");
             }
 
             write_length = sizeof(receive_response_t);
-            write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, &transfer_file_response, write_length);
+            write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, &command_io_buffer.transfer_file_response, write_length);
             break;
         }
         default:
