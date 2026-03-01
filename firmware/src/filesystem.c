@@ -12,38 +12,14 @@
  */
 
 #include <stdint.h>
+#include <string.h>
 
 #include "filesystem.h"
 #include "flash.h"
-#include "crypto.h"
-#include "secrets.h"
 
-
-#define FILE_ENCRYPTED_FLAG 0x8000U
 
 filesystem_entry_t FILE_ALLOCATION_TABLE[MAX_FILE_COUNT];
 
-static uint16_t round_up_block(uint16_t len) {
-    if (len == 0U) {
-        return 0U;
-    }
-    return (uint16_t)((len + (BLOCK_SIZE - 1U)) / BLOCK_SIZE) * BLOCK_SIZE;
-}
-
-
-static void derive_storage_key(uint8_t *key_out) {
-    const char key_seed[] = HSM_PIN;
-    const size_t seed_len = sizeof(key_seed) - 1U;
-
-    memset(key_out, 0, KEY_SIZE);
-    if (seed_len == 0U) {
-        return;
-    }
-
-    for (size_t i = 0; i < KEY_SIZE; i++) {
-        key_out[i] = (uint8_t)key_seed[i % seed_len];
-    }
-}
 
 static bool is_slot_valid(slot_t slot){
     return slot < MAX_FILE_COUNT;
@@ -149,34 +125,12 @@ int create_file(
 */
 int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     unsigned int length, flash_addr;
-    uint8_t key[KEY_SIZE];
-    uint16_t original_len;
-    uint16_t padded_len;
-    int crypto_result;
 
     if (!is_slot_valid(slot) || src == NULL || uuid == NULL)
         return -1;
 
     if (src->contents_len > MAX_CONTENTS_SIZE)
         return -1;
-
-    original_len = src->contents_len;
-    padded_len = round_up_block(original_len);
-    if (padded_len > MAX_CONTENTS_SIZE)
-        return -1;
-
-    if (padded_len > 0U) {
-        if (padded_len > original_len) {
-            memset(src->contents + original_len, 0, padded_len - original_len);
-        }
-
-        derive_storage_key(key);
-        crypto_result = encrypt_sym(src->contents, padded_len, key, src->contents);
-        if (crypto_result != 0) {
-            return -1;
-        }
-        src->contents_len = padded_len;
-    }
 
     flash_addr = FILE_START_PAGE_FROM_SLOT(slot);
     length = FILE_TOTAL_SIZE(src->contents_len);
@@ -190,9 +144,7 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
     memcpy(&FILE_ALLOCATION_TABLE[slot].uuid, uuid, UUID_SIZE);
     FILE_ALLOCATION_TABLE[slot].flash_addr = flash_addr;
     FILE_ALLOCATION_TABLE[slot].length = length;
-    FILE_ALLOCATION_TABLE[slot].padding = (padded_len > 0U)
-        ? (uint16_t)(original_len | FILE_ENCRYPTED_FLAG)
-        : 0U;
+    FILE_ALLOCATION_TABLE[slot].padding = 0U;
     store_fat();
 
     // erase the pages that will store the file
@@ -213,11 +165,6 @@ int write_file(slot_t slot, file_t *src, uint8_t *uuid) {
 */
 int read_file(slot_t slot, file_t *dest) {
     uint32_t flash_addr, file_size;
-    uint16_t packed_len;
-    uint16_t original_len;
-    uint16_t padded_len;
-    uint8_t key[KEY_SIZE];
-    int crypto_result;
 
     if (!is_slot_valid(slot) || dest == NULL)
         return -1;
@@ -230,26 +177,6 @@ int read_file(slot_t slot, file_t *dest) {
 
     flash_read(flash_addr, dest, file_size);
 
-    packed_len = FILE_ALLOCATION_TABLE[slot].padding;
-    if ((packed_len & FILE_ENCRYPTED_FLAG) != 0U) {
-        original_len = (uint16_t)(packed_len & (uint16_t)~FILE_ENCRYPTED_FLAG);
-        if (original_len > MAX_CONTENTS_SIZE) {
-            return -1;
-        }
-
-        padded_len = round_up_block(original_len);
-        if (padded_len == 0U || padded_len > dest->contents_len) {
-            return -1;
-        }
-
-        derive_storage_key(key);
-        crypto_result = decrypt_sym(dest->contents, padded_len, key, dest->contents);
-        if (crypto_result != 0) {
-            return -1;
-        }
-
-        dest->contents_len = original_len;
-    }
 
     return 0;
 }
