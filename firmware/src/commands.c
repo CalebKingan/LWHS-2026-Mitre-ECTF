@@ -15,6 +15,7 @@
 #include "commands.h"
 #include "filesystem.h"
 #include "crypto.h"
+#include <stddef.h>
 
 static bool is_name_sanitized(const char *name) {
     bool has_terminator = false;
@@ -102,11 +103,15 @@ void generate_list_files(list_response_t *file_list) {
         const filesystem_entry_t *entry = get_file_metadata(i);
         file_list_header_t file_header;
 
-        if (entry == NULL || entry->length < sizeof(file_t) - MAX_CONTENTS_SIZE) {
+        if (entry == NULL || file_list->n_files >= MAX_FILE_COUNT) {
             continue;
         }
 
-        if (entry->flash_addr == 0U || entry->flash_addr == 0xFFFFFFFFU) {
+        if (entry->length < offsetof(file_t, contents) || entry->length > STORED_FILE_SIZE) {
+            continue;
+        }
+
+        if (entry->flash_addr != FILE_START_PAGE_FROM_SLOT(i)) {
             continue;
         }
 
