@@ -163,6 +163,27 @@ int security_rng_generate(uint8_t *out, uint32_t len)
     return 0;
 }
 
+static int derive_transfer_key_from_secret(uint8_t key_out[16])
+{
+    uint8_t material[HASH_SIZE];
+    char seed[32];
+
+    memset(seed, 0, sizeof(seed));
+    memcpy(seed, HSM_PIN, PIN_LENGTH);
+    memcpy(seed + PIN_LENGTH, "|TRANSFER|", 10);
+
+    if (wc_Sha256Hash((const uint8_t *)seed, sizeof(seed), material) != 0) {
+        memset(material, 0, sizeof(material));
+        memset(seed, 0, sizeof(seed));
+        return -1;
+    }
+
+    memcpy(key_out, material, 16);
+    memset(material, 0, sizeof(material));
+    memset(seed, 0, sizeof(seed));
+    return 0;
+}
+
 static int persist_transfer_state(void)
 {
     transfer_state_header_t header;
@@ -237,7 +258,7 @@ static int load_or_init_transfer_state(void)
     flash_read(TRANSFER_STATE_FLASH_ADDR, &header, sizeof(header));
 
     if (header.magic != TRANSFER_STATE_MAGIC || header.version != TRANSFER_STATE_VERSION) {
-        if (security_rng_generate(cached_transfer_key, sizeof(cached_transfer_key)) != 0) {
+        if (derive_transfer_key_from_secret(cached_transfer_key) != 0) {
             return -1;
         }
         cached_next_send_counter = 1U;
