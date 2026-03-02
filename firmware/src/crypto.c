@@ -105,7 +105,9 @@ static int ghash_update(uint8_t y[16], const uint8_t h[16], const uint8_t* data,
     return 0;
 }
 
-static int aes_gcm_compute_tag(Aes *aes,
+static int aes_encrypt_block_with_setkey(const uint8_t *key, const uint8_t in[16], uint8_t out[16]);
+
+static int aes_gcm_compute_tag(const uint8_t *key,
                                const uint8_t nonce[12],
                                const uint8_t *aad,
                                size_t aad_len,
@@ -120,7 +122,7 @@ static int aes_gcm_compute_tag(Aes *aes,
     uint8_t len_block[16] = {0};
     int rc;
 
-    rc = wc_AesEncryptDirect(aes, h, h);
+    rc = aes_encrypt_block_with_setkey(key, h, h);
     if (rc != 0) {
         return rc;
     }
@@ -135,7 +137,7 @@ static int aes_gcm_compute_tag(Aes *aes,
     xor_block(y, len_block);
     gf128_mul(y, h, y);
 
-    rc = wc_AesEncryptDirect(aes, s, j0);
+    rc = aes_encrypt_block_with_setkey(key, j0, s);
     if (rc != 0) {
         return rc;
     }
@@ -159,6 +161,25 @@ static int secure_tag_equal(const uint8_t a[16], const uint8_t b[16])
         diff |= (uint8_t)(a[i] ^ b[i]);
     }
     return diff == 0 ? 0 : -1;
+}
+
+
+static int aes_encrypt_block_with_setkey(const uint8_t *key, const uint8_t in[16], uint8_t out[16])
+{
+    Aes aes;
+    static const uint8_t zero_iv[BLOCK_SIZE] = {0};
+    int rc;
+
+    memset(&aes, 0, sizeof(aes));
+    rc = wc_AesSetKey(&aes, key, KEY_SIZE, zero_iv, AES_ENCRYPTION);
+    if (rc != 0) {
+        memset(&aes, 0, sizeof(aes));
+        return rc;
+    }
+
+    rc = wc_AesCbcEncrypt(&aes, out, in, BLOCK_SIZE);
+    memset(&aes, 0, sizeof(aes));
+    return rc;
 }
 
 int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertext) {
@@ -213,21 +234,12 @@ int encrypt_transfer_gcm(const uint8_t *pt, size_t pt_len,
                          uint8_t *ct_out,
                          uint8_t tag_out[16])
 {
-    Aes aes;
-    int rc;
     uint8_t ctr[16] = {0};
     uint8_t stream[16];
+    int rc;
 
     if (pt == NULL || key == NULL || nonce == NULL || ct_out == NULL || tag_out == NULL) {
         return -1;
-    }
-
-    memset(&aes, 0, sizeof(aes));
-    static const uint8_t zero_iv[BLOCK_SIZE] = {0};
-    rc = wc_AesSetKey(&aes, key, KEY_SIZE, zero_iv, AES_ENCRYPTION);
-    if (rc != 0) {
-        memset(&aes, 0, sizeof(aes));
-        return rc;
     }
 
     memcpy(ctr, nonce, 12);
@@ -240,10 +252,9 @@ int encrypt_transfer_gcm(const uint8_t *pt, size_t pt_len,
         }
 
         gcm_inc32(ctr);
-        rc = wc_AesEncryptDirect(&aes, stream, ctr);
+        rc = aes_encrypt_block_with_setkey(key, ctr, stream);
         if (rc != 0) {
             memset(stream, 0, sizeof(stream));
-            memset(&aes, 0, sizeof(aes));
             return rc;
         }
 
@@ -252,11 +263,10 @@ int encrypt_transfer_gcm(const uint8_t *pt, size_t pt_len,
         }
     }
 
-    rc = aes_gcm_compute_tag(&aes, nonce, aad, aad_len, ct_out, pt_len, tag_out);
+    rc = aes_gcm_compute_tag(key, nonce, aad, aad_len, ct_out, pt_len, tag_out);
 
     memset(stream, 0, sizeof(stream));
     memset(ctr, 0, sizeof(ctr));
-    memset(&aes, 0, sizeof(aes));
     return rc;
 }
 
@@ -267,7 +277,6 @@ int decrypt_transfer_gcm(const uint8_t *ct, size_t ct_len,
                          const uint8_t tag[16],
                          uint8_t *pt_out)
 {
-    Aes aes;
     int rc;
     uint8_t expected_tag[16];
     uint8_t ctr[16] = {0};
@@ -277,18 +286,9 @@ int decrypt_transfer_gcm(const uint8_t *ct, size_t ct_len,
         return -1;
     }
 
-    memset(&aes, 0, sizeof(aes));
-    static const uint8_t zero_iv[BLOCK_SIZE] = {0};
-    rc = wc_AesSetKey(&aes, key, KEY_SIZE, zero_iv, AES_ENCRYPTION);
-    if (rc != 0) {
-        memset(&aes, 0, sizeof(aes));
-        return rc;
-    }
-
-    rc = aes_gcm_compute_tag(&aes, nonce, aad, aad_len, ct, ct_len, expected_tag);
+    rc = aes_gcm_compute_tag(key, nonce, aad, aad_len, ct, ct_len, expected_tag);
     if (rc != 0 || secure_tag_equal(expected_tag, tag) != 0) {
         memset(expected_tag, 0, sizeof(expected_tag));
-        memset(&aes, 0, sizeof(aes));
         return -1;
     }
 
@@ -302,11 +302,10 @@ int decrypt_transfer_gcm(const uint8_t *ct, size_t ct_len,
         }
 
         gcm_inc32(ctr);
-        rc = wc_AesEncryptDirect(&aes, stream, ctr);
+        rc = aes_encrypt_block_with_setkey(key, ctr, stream);
         if (rc != 0) {
             memset(stream, 0, sizeof(stream));
             memset(expected_tag, 0, sizeof(expected_tag));
-            memset(&aes, 0, sizeof(aes));
             return rc;
         }
 
@@ -318,6 +317,5 @@ int decrypt_transfer_gcm(const uint8_t *ct, size_t ct_len,
     memset(stream, 0, sizeof(stream));
     memset(ctr, 0, sizeof(ctr));
     memset(expected_tag, 0, sizeof(expected_tag));
-    memset(&aes, 0, sizeof(aes));
     return 0;
 }
