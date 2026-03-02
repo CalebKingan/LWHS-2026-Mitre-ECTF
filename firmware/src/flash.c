@@ -74,30 +74,47 @@ void flash_read(uint32_t address, void* buffer, uint32_t size) {
 */
 int flash_write(uint32_t address, void* buffer, uint32_t size) {
     volatile DL_FLASHCTL_COMMAND_STATUS cmdStatus;
+    uint8_t *src = (uint8_t *)buffer;
+    uint32_t bytes_remaining = size;
+
+    /* Program in small chunks to avoid large stack allocations on 32KB SRAM target. */
+    enum { FLASH_WRITE_CHUNK_WORDS = 64U, FLASH_WRITE_CHUNK_BYTES = FLASH_WRITE_CHUNK_WORDS * 4U };
+    uint32_t write_data[FLASH_WRITE_CHUNK_WORDS];
+
+    if (buffer == NULL) {
+        return -1;
+    }
+
     DL_FlashCTL_executeClearStatus(FLASHCTL);
     DL_FlashCTL_unprotectSector(FLASHCTL, address, DL_FLASHCTL_REGION_SELECT_MAIN);
 
-    // program function expects size to be the number of 32-bit words
-    uint32_t size_32b = (size % 4 == 0) ? (size / 4) : (size / 4) + 1;
-    // it also expects it to be an even number
-    size_32b = (size_32b % 2 == 0) ? size_32b : size_32b + 1;
+    while (bytes_remaining > 0U) {
+        uint32_t chunk_bytes = (bytes_remaining > FLASH_WRITE_CHUNK_BYTES) ? FLASH_WRITE_CHUNK_BYTES : bytes_remaining;
+        uint32_t chunk_words = (chunk_bytes + 3U) / 4U;
 
-    // write the data into a correctly sized region to ensure no undefined behavior
-    uint32_t write_data[size_32b];
-    memset(write_data, 0xff, size_32b*4);
-    memcpy(write_data, buffer, size);
+        /* 64-bit + ECC write API requires an even number of 32-bit words. */
+        if ((chunk_words & 1U) != 0U) {
+            chunk_words++;
+        }
 
-    // if memory section is corrected, make sure to write the ECC (you have been warned)
-    cmdStatus = DL_FlashCTL_programMemoryBlockingFromRAM64WithECCGenerated(
-        FLASHCTL, address, (uint32_t *)write_data, size_32b, DL_FLASHCTL_REGION_SELECT_MAIN
-    );
-    if (cmdStatus == DL_FLASHCTL_COMMAND_STATUS_FAILED) {
-        return -1;
+        memset(write_data, 0xFF, chunk_words * sizeof(uint32_t));
+        memcpy(write_data, src, chunk_bytes);
+
+        cmdStatus = DL_FlashCTL_programMemoryBlockingFromRAM64WithECCGenerated(
+            FLASHCTL, address, write_data, chunk_words, DL_FLASHCTL_REGION_SELECT_MAIN
+        );
+        if (cmdStatus == DL_FLASHCTL_COMMAND_STATUS_FAILED) {
+            return -1;
+        }
+
+        if (!DL_FlashCTL_waitForCmdDone(FLASHCTL)) {
+            return -1;
+        }
+
+        address += chunk_words * sizeof(uint32_t);
+        src += chunk_bytes;
+        bytes_remaining -= chunk_bytes;
     }
-    // returns a boolean, so handle that accordingly
-    bool ret = DL_FlashCTL_waitForCmdDone(FLASHCTL);
-    if (ret == false) {
-        return -1;
-    }
+
     return 0;
 }
