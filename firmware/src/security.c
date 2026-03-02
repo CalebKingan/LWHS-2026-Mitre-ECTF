@@ -165,22 +165,21 @@ int security_rng_generate(uint8_t *out, uint32_t len)
 
 static int derive_transfer_key_from_secret(uint8_t key_out[16])
 {
+    /*
+     * Transfer key must be identical across devices so boards with different
+     * local unlock PINs can still exchange files. Derive from shared firmware
+     * domain material (not per-device PIN) and persist to flash.
+     */
+    static const uint8_t transfer_domain[] = "LWHS_ECTF_2026_TRANSFER_KEY_V1";
     uint8_t material[HASH_SIZE];
-    char seed[32];
 
-    memset(seed, 0, sizeof(seed));
-    memcpy(seed, HSM_PIN, PIN_LENGTH);
-    memcpy(seed + PIN_LENGTH, "|TRANSFER|", 10);
-
-    if (wc_Sha256Hash((const uint8_t *)seed, sizeof(seed), material) != 0) {
+    if (wc_Sha256Hash(transfer_domain, sizeof(transfer_domain), material) != 0) {
         memset(material, 0, sizeof(material));
-        memset(seed, 0, sizeof(seed));
         return -1;
     }
 
     memcpy(key_out, material, 16);
     memset(material, 0, sizeof(material));
-    memset(seed, 0, sizeof(seed));
     return 0;
 }
 
@@ -292,6 +291,23 @@ static int load_or_init_transfer_state(void)
         }
 
         cached_record_index = (uint16_t)(i + 1U);
+    }
+
+    {
+        uint8_t expected_key[16];
+        if (derive_transfer_key_from_secret(expected_key) != 0) {
+            return -1;
+        }
+
+        /* Migrate any previously persisted per-device/random key state. */
+        if (memcmp(cached_transfer_key, expected_key, sizeof(expected_key)) != 0) {
+            memcpy(cached_transfer_key, expected_key, sizeof(expected_key));
+            if (persist_transfer_state() != 0) {
+                memset(expected_key, 0, sizeof(expected_key));
+                return -1;
+            }
+        }
+        memset(expected_key, 0, sizeof(expected_key));
     }
 
     transfer_state_loaded = true;
