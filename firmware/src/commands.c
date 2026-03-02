@@ -45,20 +45,39 @@ static union {
 } command_io_buffer;
 
 static void derive_transfer_key(uint8_t *key_out) {
-    const char transfer_key_seed[] = HSM_PIN;
-    const size_t seed_len = sizeof(transfer_key_seed) - 1U;
+    /*
+     * Use a transport-specific static key so peer-to-peer transfer crypto
+     * remains stable across device PIN changes and firmware swaps.
+     */
+    static const uint8_t transfer_key_seed[KEY_SIZE] = {
+        0x54, 0x52, 0x4E, 0x53, 0x46, 0x45, 0x52, 0x5F,
+        0x4B, 0x45, 0x59, 0x5F, 0x45, 0x43, 0x54, 0x46
+    };
 
-    memset(key_out, 0, KEY_SIZE);
-    if (seed_len == 0U) {
-        return;
-    }
-
-    for (size_t i = 0; i < KEY_SIZE; i++) {
-        key_out[i] = (uint8_t)transfer_key_seed[i % seed_len];
-    }
+    memcpy(key_out, transfer_key_seed, KEY_SIZE);
 }
 
-static int transform_transfer_contents(uint8_t *contents, bool encrypting) {
+static uint16_t transfer_crypto_len(uint16_t contents_len)
+{
+    uint16_t bounded_len = contents_len;
+
+    if (bounded_len > MAX_CONTENTS_SIZE) {
+        bounded_len = MAX_CONTENTS_SIZE;
+    }
+
+    if (bounded_len == 0U) {
+        return BLOCK_SIZE;
+    }
+
+    uint16_t rem = bounded_len % BLOCK_SIZE;
+    if (rem == 0U) {
+        return bounded_len;
+    }
+
+    return (uint16_t)(bounded_len + (BLOCK_SIZE - rem));
+}
+
+static int transform_transfer_contents(uint8_t *contents, uint16_t contents_len, bool encrypting) {
     uint8_t key[KEY_SIZE];
     int result;
 
@@ -68,9 +87,9 @@ static int transform_transfer_contents(uint8_t *contents, bool encrypting) {
 
     derive_transfer_key(key);
     if (encrypting) {
-        result = encrypt_sym(contents, MAX_CONTENTS_SIZE, key, contents);
+        result = encrypt_sym(contents, transfer_crypto_len(contents_len), key, contents);
     } else {
-        result = decrypt_sym(contents, MAX_CONTENTS_SIZE, key, contents);
+        result = decrypt_sym(contents, transfer_crypto_len(contents_len), key, contents);
     }
 
     if (result != 0) {
@@ -339,7 +358,10 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
         return -1;
     }
 
-    if (transform_transfer_contents(command_io_buffer.transfer_file_response.file.contents, false) != 0) {
+    if (transform_transfer_contents(
+            command_io_buffer.transfer_file_response.file.contents,
+            command_io_buffer.transfer_file_response.file.contents_len,
+            false) != 0) {
         print_error("Failed to decrypt transfer contents");
         return -1;
     }
@@ -502,7 +524,10 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
 
             memcpy(&command_io_buffer.transfer_file_response.uuid, &metadata->uuid, UUID_SIZE);
 
-            if (transform_transfer_contents(command_io_buffer.transfer_file_response.file.contents, true) != 0) {
+            if (transform_transfer_contents(
+                    command_io_buffer.transfer_file_response.file.contents,
+                    command_io_buffer.transfer_file_response.file.contents_len,
+                    true) != 0) {
                 SEND_TRANSFER_ERROR("Failed to encrypt transfer contents");
             }
 
