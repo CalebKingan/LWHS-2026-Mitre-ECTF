@@ -14,7 +14,7 @@
 #include "host_messaging.h"
 #include "secrets.h"
 #include "flash.h"
-#include "wolfssl/wolfcrypt/random.h"
+#include "crypto.h"
 #include <string.h>
 #include "ti_msp_dl_config.h"
 
@@ -57,8 +57,7 @@ static uint64_t cached_next_send_counter = 1U;
 static uint64_t cached_last_seen_counter = 0U;
 static uint16_t cached_record_index = 0U;
 
-static WC_RNG g_rng;
-static bool g_rng_inited = false;
+static uint64_t prng_counter = 0U;
 
 static uint32_t next_noise_u32(void)
 {
@@ -114,34 +113,54 @@ static bool constant_time_pin_match_fi(const unsigned char *pin)
     return false;
 }
 
-static int ensure_rng(void)
+static uint32_t sample_entropy_word(void)
 {
-    int rc;
-
-    if (g_rng_inited) {
-        return 0;
-    }
-
-    memset(&g_rng, 0, sizeof(g_rng));
-    rc = wc_InitRng(&g_rng);
-    if (rc == 0) {
-        g_rng_inited = true;
-    }
-
-    return rc;
+    uint32_t t = noise_state ^ (uint32_t)prng_counter;
+    t ^= (noise_state << 7U) ^ (noise_state >> 3U);
+    t ^= (uint32_t)(uintptr_t)&t;
+    t ^= (uint32_t)(CPUCLK_FREQ);
+    return t;
 }
 
 int security_rng_generate(uint8_t *out, uint32_t len)
 {
+    uint8_t digest[HASH_SIZE];
+    uint8_t seed[24];
+    uint32_t produced = 0U;
+
     if (out == NULL || len == 0U) {
         return -1;
     }
 
-    if (ensure_rng() != 0) {
-        return -1;
+    while (produced < len) {
+        uint32_t entropy = sample_entropy_word();
+        prng_counter++;
+
+        memcpy(seed, &noise_state, sizeof(noise_state));
+        memcpy(seed + 4, &entropy, sizeof(entropy));
+        memcpy(seed + 8, &prng_counter, sizeof(prng_counter));
+        memcpy(seed + 16, &produced, sizeof(produced));
+        memcpy(seed + 20, &len, sizeof(len));
+
+        if (wc_Sha256Hash(seed, sizeof(seed), digest) != 0) {
+            memset(digest, 0, sizeof(digest));
+            memset(seed, 0, sizeof(seed));
+            return -1;
+        }
+
+        uint32_t chunk = len - produced;
+        if (chunk > sizeof(digest)) {
+            chunk = sizeof(digest);
+        }
+        memcpy(out + produced, digest, chunk);
+        produced += chunk;
+
+        noise_state ^= entropy ^ digest[0];
     }
 
-    return wc_RNG_GenerateBlock(&g_rng, out, len);
+    memset(digest, 0, sizeof(digest));
+    memset(seed, 0, sizeof(seed));
+    return 0;
 }
 
 static int persist_transfer_state(void)
