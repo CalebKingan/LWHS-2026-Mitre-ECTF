@@ -51,4 +51,11 @@ bool check_pin(unsigned char *pin);
 */
 bool validate_permission(uint16_t group_id, permission_enum_t perm);
 
+
+int security_rng_generate(uint8_t *out, uint32_t len);
+int get_or_create_transfer_key(uint8_t key_out[16]);
+int get_and_increment_transfer_counter(uint64_t *counter_out);
+int get_last_seen_counter(uint64_t *counter_out);
+int set_last_seen_counter(uint64_t counter);
+
 #endif  // __SECURITY_H__

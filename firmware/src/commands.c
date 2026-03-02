@@ -16,6 +16,7 @@
 #include "filesystem.h"
 #include "crypto.h"
 #include <stddef.h>
+#include <string.h>
 
 static bool is_name_sanitized(const char *name) {
     bool has_terminator = false;
@@ -44,19 +45,6 @@ static union {
     receive_response_t transfer_file_response;
 } command_io_buffer;
 
-static void derive_transfer_key(uint8_t *key_out) {
-    /*
-     * Use a transport-specific static key so peer-to-peer transfer crypto
-     * remains stable across device PIN changes and firmware swaps.
-     */
-    static const uint8_t transfer_key_seed[KEY_SIZE] = {
-        0x54, 0x52, 0x4E, 0x53, 0x46, 0x45, 0x52, 0x5F,
-        0x4B, 0x45, 0x59, 0x5F, 0x45, 0x43, 0x54, 0x46
-    };
-
-    memcpy(key_out, transfer_key_seed, KEY_SIZE);
-}
-
 static uint16_t transfer_crypto_len(uint16_t contents_len)
 {
     uint16_t bounded_len = contents_len;
@@ -77,25 +65,30 @@ static uint16_t transfer_crypto_len(uint16_t contents_len)
     return (uint16_t)(bounded_len + (BLOCK_SIZE - rem));
 }
 
-static int transform_transfer_contents(uint8_t *contents, uint16_t contents_len, bool encrypting) {
-    uint8_t key[KEY_SIZE];
-    int result;
+typedef struct {
+    uint8_t uuid[UUID_SIZE];
+    group_id_t group_id;
+    uint16_t contents_len;
+    uint64_t counter;
+    uint8_t msg_type;
+} transfer_aad_t;
 
-    if (contents == NULL) {
-        return -1;
-    }
+static void build_transfer_aad(transfer_aad_t *aad,
+                               const uint8_t uuid[UUID_SIZE],
+                               group_id_t group_id,
+                               uint16_t contents_len,
+                               uint64_t counter)
+{
+    memcpy(aad->uuid, uuid, UUID_SIZE);
+    aad->group_id = group_id;
+    aad->contents_len = contents_len;
+    aad->counter = counter;
+    aad->msg_type = (uint8_t)RECEIVE_MSG;
+}
 
-    derive_transfer_key(key);
-    if (encrypting) {
-        result = encrypt_sym(contents, transfer_crypto_len(contents_len), key, contents);
-    } else {
-        result = decrypt_sym(contents, transfer_crypto_len(contents_len), key, contents);
-    }
-
-    if (result != 0) {
-        return result;
-    }
-    return 0;
+static uint16_t transfer_response_len_from_ct_len(uint16_t ct_len)
+{
+    return (uint16_t)(offsetof(receive_response_t, blob.ciphertext) + ct_len);
 }
 
 /**********************************************************
@@ -316,6 +309,12 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
 
     receive_command_t *command = (receive_command_t *)buf;
     receive_request_t request;
+    transfer_aad_t aad;
+    uint8_t transfer_plaintext[MAX_CONTENTS_SIZE];
+    uint8_t transfer_key[KEY_SIZE];
+    uint16_t expected_len;
+    uint16_t crypto_len;
+    uint64_t last_seen_counter;
     msg_type_t cmd;
     uint16_t len_recv_msg;
 
@@ -329,56 +328,98 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
         return -1;
     }
 
-    // zeroize the buffers we will use
     memset(&command_io_buffer.transfer_file_response, 0, sizeof(command_io_buffer.transfer_file_response));
     memset(&request, 0, sizeof(request));
 
-    // prep request to neighbor
     request.slot = command->read_slot;
     memcpy(&request.permissions, &global_permissions, sizeof(group_permission_t) * MAX_PERMS);
 
-    // request the file from the neighboring device
     write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, (void *)&request, sizeof(receive_request_t));
 
-    // limits receiving message size
     len_recv_msg = sizeof(command_io_buffer.transfer_file_response);
-
-    //receive the response message
     if (read_packet(TRANSFER_INTERFACE, &cmd, &command_io_buffer.transfer_file_response, &len_recv_msg) != MSG_OK) {
         print_error("Failed to receive response");
         return -1;
     }
-    if (len_recv_msg != sizeof(command_io_buffer.transfer_file_response)){
-         print_error("Malformed recieved response length");
-        return -1;
-    }
-    
+
     if (cmd != RECEIVE_MSG) {
         print_error("Opcode mismatch");
         return -1;
     }
 
-    if (transform_transfer_contents(
-            command_io_buffer.transfer_file_response.file.contents,
-            command_io_buffer.transfer_file_response.file.contents_len,
-            false) != 0) {
-        print_error("Failed to decrypt transfer contents");
+    if (command_io_buffer.transfer_file_response.contents_len > MAX_CONTENTS_SIZE) {
+        print_error("Malformed receive response contents length");
         return -1;
     }
-    
-    // Enforce local receive permission before writing file
-    if (!validate_permission(command_io_buffer.transfer_file_response.file.group_id, PERM_RECEIVE)) {
+
+    crypto_len = transfer_crypto_len(command_io_buffer.transfer_file_response.contents_len);
+    if (command_io_buffer.transfer_file_response.blob.ct_len != crypto_len) {
+        print_error("Malformed receive response ciphertext length");
+        return -1;
+    }
+
+    expected_len = transfer_response_len_from_ct_len(command_io_buffer.transfer_file_response.blob.ct_len);
+    if (len_recv_msg != expected_len) {
+        print_error("Malformed receive response packet length");
+        return -1;
+    }
+
+    if (get_last_seen_counter(&last_seen_counter) != 0) {
+        print_error("Failed to load replay state");
+        return -1;
+    }
+    if (command_io_buffer.transfer_file_response.blob.counter <= last_seen_counter) {
+        print_error("Replay detected");
+        return -1;
+    }
+
+    if (get_or_create_transfer_key(transfer_key) != 0) {
+        print_error("Failed to load transfer key");
+        return -1;
+    }
+
+    build_transfer_aad(&aad,
+                       command_io_buffer.transfer_file_response.uuid,
+                       command_io_buffer.transfer_file_response.group_id,
+                       command_io_buffer.transfer_file_response.contents_len,
+                       command_io_buffer.transfer_file_response.blob.counter);
+
+    if (decrypt_transfer_gcm(command_io_buffer.transfer_file_response.blob.ciphertext,
+                             command_io_buffer.transfer_file_response.blob.ct_len,
+                             transfer_key,
+                             command_io_buffer.transfer_file_response.blob.nonce,
+                             (const uint8_t *)&aad,
+                             sizeof(aad),
+                             command_io_buffer.transfer_file_response.blob.tag,
+                             transfer_plaintext) != 0) {
+        print_error("Failed to authenticate transfer contents");
+        return -1;
+    }
+
+    if (!validate_permission(command_io_buffer.transfer_file_response.group_id, PERM_RECEIVE)) {
         print_error("Permission denied: cannot receive this group");
         return -1;
     }
 
+    if (set_last_seen_counter(command_io_buffer.transfer_file_response.blob.counter) != 0) {
+        print_error("Failed to persist replay state");
+        return -1;
+    }
 
-    // write that file into the file system
-    if (write_file(command->write_slot, &command_io_buffer.transfer_file_response.file, command_io_buffer.transfer_file_response.uuid) < 0) {
+    if (create_file(&current_file,
+                    command_io_buffer.transfer_file_response.group_id,
+                    command_io_buffer.transfer_file_response.name,
+                    command_io_buffer.transfer_file_response.contents_len,
+                    transfer_plaintext) < 0) {
+        print_error("Failed to build received file");
+        return -1;
+    }
+
+    if (write_file(command->write_slot, &current_file, command_io_buffer.transfer_file_response.uuid) < 0) {
         print_error("Writing received file failed");
         return -1;
     }
-    // empty success message
+
     write_packet(CONTROL_INTERFACE, RECEIVE_MSG, NULL, 0);
     return 0;
 }
@@ -489,6 +530,12 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             write_packet(TRANSFER_INTERFACE, INTERROGATE_MSG, &file_list, write_length);
             break;
         case RECEIVE_MSG: {
+            uint8_t transfer_key[KEY_SIZE];
+            uint8_t plaintext[MAX_CONTENTS_SIZE];
+            transfer_aad_t aad;
+            uint16_t crypto_len;
+            uint64_t counter;
+
             if (read_length != sizeof(receive_request_t)) {
                 SEND_TRANSFER_ERROR("Malformed receive transfer request");
             }
@@ -499,15 +546,13 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
                 SEND_TRANSFER_ERROR("Invalid slot in transfer request");
             }
 
-            // Read the requested file first so we know its group_id
-            if (read_file(command->slot, &command_io_buffer.transfer_file_response.file) < 0) {
+            if (read_file(command->slot, &current_file) < 0) {
                 SEND_TRANSFER_ERROR("Failed to read file");
             }
 
-            // Enforce requester's RECEIVE permission before sending file
             bool allowed = false;
             for (int i = 0; i < MAX_PERMS; i++) {
-                if (command->permissions[i].group_id == command_io_buffer.transfer_file_response.file.group_id &&
+                if (command->permissions[i].group_id == current_file.group_id &&
                     command->permissions[i].receive) {
                     allowed = true;
                     break;
@@ -522,16 +567,48 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
                 SEND_TRANSFER_ERROR("Getting metadata failed");
             }
 
-            memcpy(&command_io_buffer.transfer_file_response.uuid, &metadata->uuid, UUID_SIZE);
+            if (get_or_create_transfer_key(transfer_key) != 0) {
+                SEND_TRANSFER_ERROR("Failed to load transfer key");
+            }
 
-            if (transform_transfer_contents(
-                    command_io_buffer.transfer_file_response.file.contents,
-                    command_io_buffer.transfer_file_response.file.contents_len,
-                    true) != 0) {
+            if (get_and_increment_transfer_counter(&counter) != 0) {
+                SEND_TRANSFER_ERROR("Failed to update transfer counter");
+            }
+
+            crypto_len = transfer_crypto_len(current_file.contents_len);
+            memset(&command_io_buffer.transfer_file_response, 0, sizeof(command_io_buffer.transfer_file_response));
+            memcpy(command_io_buffer.transfer_file_response.uuid, metadata->uuid, UUID_SIZE);
+            command_io_buffer.transfer_file_response.group_id = current_file.group_id;
+            memcpy(command_io_buffer.transfer_file_response.name, current_file.name, MAX_NAME_SIZE);
+            command_io_buffer.transfer_file_response.contents_len = current_file.contents_len;
+            command_io_buffer.transfer_file_response.blob.counter = counter;
+            command_io_buffer.transfer_file_response.blob.ct_len = crypto_len;
+
+            if (security_rng_generate(command_io_buffer.transfer_file_response.blob.nonce, TRANSFER_GCM_NONCE_SIZE) != 0) {
+                SEND_TRANSFER_ERROR("Failed to generate nonce");
+            }
+
+            memset(plaintext, 0, crypto_len);
+            memcpy(plaintext, current_file.contents, current_file.contents_len);
+
+            build_transfer_aad(&aad,
+                               command_io_buffer.transfer_file_response.uuid,
+                               command_io_buffer.transfer_file_response.group_id,
+                               command_io_buffer.transfer_file_response.contents_len,
+                               command_io_buffer.transfer_file_response.blob.counter);
+
+            if (encrypt_transfer_gcm(plaintext,
+                                     crypto_len,
+                                     transfer_key,
+                                     command_io_buffer.transfer_file_response.blob.nonce,
+                                     (const uint8_t *)&aad,
+                                     sizeof(aad),
+                                     command_io_buffer.transfer_file_response.blob.ciphertext,
+                                     command_io_buffer.transfer_file_response.blob.tag) != 0) {
                 SEND_TRANSFER_ERROR("Failed to encrypt transfer contents");
             }
 
-            write_length = sizeof(receive_response_t);
+            write_length = transfer_response_len_from_ct_len(command_io_buffer.transfer_file_response.blob.ct_len);
             write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, &command_io_buffer.transfer_file_response, write_length);
             break;
         }

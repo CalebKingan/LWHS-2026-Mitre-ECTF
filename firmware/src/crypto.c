@@ -14,6 +14,7 @@
 #include "crypto.h"
 #include "security.h"
 #include <stdint.h>
+#include <string.h>
 
 
 /******************************** FUNCTION PROTOTYPES ********************************/
@@ -100,4 +101,54 @@ int hash(void *data, size_t len, uint8_t *hash_out) {
         return -1;
 
     return wc_Sha256Hash((uint8_t *)data, len, hash_out);
+}
+
+int encrypt_transfer_gcm(const uint8_t *pt, size_t pt_len,
+                         const uint8_t *key,
+                         const uint8_t nonce[12],
+                         const uint8_t *aad, size_t aad_len,
+                         uint8_t *ct_out,
+                         uint8_t tag_out[16])
+{
+    Aes aes;
+    int rc;
+
+    if (pt == NULL || key == NULL || nonce == NULL || ct_out == NULL || tag_out == NULL) {
+        return -1;
+    }
+
+    memset(&aes, 0, sizeof(aes));
+    rc = wc_AesGcmSetKey(&aes, key, KEY_SIZE);
+    if (rc == 0) {
+        rc = wc_AesGcmEncrypt(&aes, ct_out, pt, pt_len, nonce, 12, tag_out, 16, aad, aad_len);
+    }
+
+    wc_AesFree(&aes);
+    memset(&aes, 0, sizeof(aes));
+    return rc;
+}
+
+int decrypt_transfer_gcm(const uint8_t *ct, size_t ct_len,
+                         const uint8_t *key,
+                         const uint8_t nonce[12],
+                         const uint8_t *aad, size_t aad_len,
+                         const uint8_t tag[16],
+                         uint8_t *pt_out)
+{
+    Aes aes;
+    int rc;
+
+    if (ct == NULL || key == NULL || nonce == NULL || tag == NULL || pt_out == NULL) {
+        return -1;
+    }
+
+    memset(&aes, 0, sizeof(aes));
+    rc = wc_AesGcmSetKey(&aes, key, KEY_SIZE);
+    if (rc == 0) {
+        rc = wc_AesGcmDecrypt(&aes, pt_out, ct, ct_len, nonce, 12, tag, 16, aad, aad_len);
+    }
+
+    wc_AesFree(&aes);
+    memset(&aes, 0, sizeof(aes));
+    return rc;
 }
