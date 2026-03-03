@@ -45,6 +45,9 @@ static union {
     receive_response_t transfer_file_response;
 } command_io_buffer;
 
+/* Avoid large per-call stack allocations during transfer crypto paths. */
+static uint8_t transfer_work_buffer[MAX_CONTENTS_SIZE];
+
 static uint16_t transfer_crypto_len(uint16_t contents_len)
 {
     uint16_t bounded_len = contents_len;
@@ -333,7 +336,6 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
     receive_command_t *command = (receive_command_t *)buf;
     receive_request_t request;
     uint8_t aad[TRANSFER_AAD_SIZE];
-    uint8_t transfer_plaintext[MAX_CONTENTS_SIZE];
     uint8_t transfer_key[KEY_SIZE];
     uint16_t expected_len;
     uint16_t crypto_len;
@@ -414,7 +416,7 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
                              aad,
                              TRANSFER_AAD_SIZE,
                              command_io_buffer.transfer_file_response.blob.tag,
-                             transfer_plaintext) != 0) {
+                             transfer_work_buffer) != 0) {
         print_error("Failed to authenticate transfer contents");
         return -1;
     }
@@ -433,7 +435,7 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
                     command_io_buffer.transfer_file_response.group_id,
                     command_io_buffer.transfer_file_response.name,
                     command_io_buffer.transfer_file_response.contents_len,
-                    transfer_plaintext) < 0) {
+                    transfer_work_buffer) < 0) {
         print_error("Failed to build received file");
         return -1;
     }
@@ -554,7 +556,6 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             break;
         case RECEIVE_MSG: {
             uint8_t transfer_key[KEY_SIZE];
-            uint8_t plaintext[MAX_CONTENTS_SIZE];
             uint8_t aad[TRANSFER_AAD_SIZE];
             uint16_t crypto_len;
             uint64_t counter;
@@ -611,8 +612,8 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
                 SEND_TRANSFER_ERROR("Failed to generate nonce");
             }
 
-            memset(plaintext, 0, crypto_len);
-            memcpy(plaintext, current_file.contents, current_file.contents_len);
+            memset(transfer_work_buffer, 0, crypto_len);
+            memcpy(transfer_work_buffer, current_file.contents, current_file.contents_len);
 
             build_transfer_aad(aad,
                                command_io_buffer.transfer_file_response.uuid,
@@ -620,7 +621,7 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
                                command_io_buffer.transfer_file_response.contents_len,
                                command_io_buffer.transfer_file_response.blob.counter);
 
-            if (encrypt_transfer_gcm(plaintext,
+            if (encrypt_transfer_gcm(transfer_work_buffer,
                                      crypto_len,
                                      transfer_key,
                                      command_io_buffer.transfer_file_response.blob.nonce,
