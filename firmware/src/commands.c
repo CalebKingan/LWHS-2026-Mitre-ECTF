@@ -65,30 +65,48 @@ static uint16_t transfer_crypto_len(uint16_t contents_len)
     return (uint16_t)(bounded_len + (BLOCK_SIZE - rem));
 }
 
-typedef struct {
-    uint8_t uuid[UUID_SIZE];
-    group_id_t group_id;
-    uint16_t contents_len;
-    uint64_t counter;
-    uint8_t msg_type;
-} transfer_aad_t;
+#define TRANSFER_AAD_SIZE (UUID_SIZE + sizeof(group_id_t) + sizeof(uint16_t) + sizeof(uint64_t) + 1U)
 
-static void build_transfer_aad(transfer_aad_t *aad,
+static void store_le16(uint8_t out[2], uint16_t v)
+{
+    out[0] = (uint8_t)v;
+    out[1] = (uint8_t)(v >> 8);
+}
+
+static void store_le64(uint8_t out[8], uint64_t v)
+{
+    out[0] = (uint8_t)v;
+    out[1] = (uint8_t)(v >> 8);
+    out[2] = (uint8_t)(v >> 16);
+    out[3] = (uint8_t)(v >> 24);
+    out[4] = (uint8_t)(v >> 32);
+    out[5] = (uint8_t)(v >> 40);
+    out[6] = (uint8_t)(v >> 48);
+    out[7] = (uint8_t)(v >> 56);
+}
+
+static void build_transfer_aad(uint8_t aad[TRANSFER_AAD_SIZE],
                                const uint8_t uuid[UUID_SIZE],
                                group_id_t group_id,
                                uint16_t contents_len,
                                uint64_t counter)
 {
-    /*
-     * AAD bytes must match exactly between sender and receiver.
-     * Zero the whole struct so any compiler padding bytes are deterministic.
-     */
-    memset(aad, 0, sizeof(*aad));
-    memcpy(aad->uuid, uuid, UUID_SIZE);
-    aad->group_id = group_id;
-    aad->contents_len = contents_len;
-    aad->counter = counter;
-    aad->msg_type = (uint8_t)RECEIVE_MSG;
+    uint16_t off = 0U;
+
+    memset(aad, 0, TRANSFER_AAD_SIZE);
+    memcpy(&aad[off], uuid, UUID_SIZE);
+    off += UUID_SIZE;
+
+    store_le16(&aad[off], group_id);
+    off += sizeof(group_id_t);
+
+    store_le16(&aad[off], contents_len);
+    off += sizeof(uint16_t);
+
+    store_le64(&aad[off], counter);
+    off += sizeof(uint64_t);
+
+    aad[off] = (uint8_t)RECEIVE_MSG;
 }
 
 static uint16_t transfer_response_len_from_ct_len(uint16_t ct_len)
@@ -314,7 +332,7 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
 
     receive_command_t *command = (receive_command_t *)buf;
     receive_request_t request;
-    transfer_aad_t aad;
+    uint8_t aad[TRANSFER_AAD_SIZE];
     uint8_t transfer_plaintext[MAX_CONTENTS_SIZE];
     uint8_t transfer_key[KEY_SIZE];
     uint16_t expected_len;
@@ -383,7 +401,7 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
         return -1;
     }
 
-    build_transfer_aad(&aad,
+    build_transfer_aad(aad,
                        command_io_buffer.transfer_file_response.uuid,
                        command_io_buffer.transfer_file_response.group_id,
                        command_io_buffer.transfer_file_response.contents_len,
@@ -393,8 +411,8 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
                              command_io_buffer.transfer_file_response.blob.ct_len,
                              transfer_key,
                              command_io_buffer.transfer_file_response.blob.nonce,
-                             (const uint8_t *)&aad,
-                             sizeof(aad),
+                             aad,
+                             TRANSFER_AAD_SIZE,
                              command_io_buffer.transfer_file_response.blob.tag,
                              transfer_plaintext) != 0) {
         print_error("Failed to authenticate transfer contents");
@@ -537,7 +555,7 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
         case RECEIVE_MSG: {
             uint8_t transfer_key[KEY_SIZE];
             uint8_t plaintext[MAX_CONTENTS_SIZE];
-            transfer_aad_t aad;
+            uint8_t aad[TRANSFER_AAD_SIZE];
             uint16_t crypto_len;
             uint64_t counter;
 
@@ -596,7 +614,7 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             memset(plaintext, 0, crypto_len);
             memcpy(plaintext, current_file.contents, current_file.contents_len);
 
-            build_transfer_aad(&aad,
+            build_transfer_aad(aad,
                                command_io_buffer.transfer_file_response.uuid,
                                command_io_buffer.transfer_file_response.group_id,
                                command_io_buffer.transfer_file_response.contents_len,
@@ -606,8 +624,8 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
                                      crypto_len,
                                      transfer_key,
                                      command_io_buffer.transfer_file_response.blob.nonce,
-                                     (const uint8_t *)&aad,
-                                     sizeof(aad),
+                                     aad,
+                                     TRANSFER_AAD_SIZE,
                                      command_io_buffer.transfer_file_response.blob.ciphertext,
                                      command_io_buffer.transfer_file_response.blob.tag) != 0) {
                 SEND_TRANSFER_ERROR("Failed to encrypt transfer contents");
