@@ -13,6 +13,8 @@
 #include "security.h"
 #include "host_messaging.h"
 #include "secrets.h"
+#include "flash.h"
+#include "crypto.h"
 #include <string.h>
 #include "ti_msp_dl_config.h"
 
@@ -26,7 +28,36 @@
 #define FI_DECISION_TRUE 0x13579BDFU
 #define FI_DECISION_FALSE 0xECA86420U
 
+#define TRANSFER_STATE_FLASH_ADDR 0x0003A400U
+#define TRANSFER_STATE_MAGIC 0x54524652U /* 'TRFR' */
+#define TRANSFER_STATE_VERSION 2U /* bump to migrate legacy transfer-key state */
+#define TRANSFER_REC_TYPE_NEXT_SEND 1U
+#define TRANSFER_REC_TYPE_LAST_SEEN 2U
+#define TRANSFER_COUNTER_MAX UINT64_MAX
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint8_t key[16];
+    uint8_t reserved[8];
+} transfer_state_header_t;
+
+typedef struct {
+    uint8_t type;
+    uint8_t reserved[7];
+    uint64_t value;
+} transfer_counter_record_t;
+
+#define TRANSFER_RECORD_CAPACITY ((FLASH_PAGE_SIZE - sizeof(transfer_state_header_t)) / sizeof(transfer_counter_record_t))
+
 static uint32_t noise_state = 0x6B1E4A2DU;
+static bool transfer_state_loaded = false;
+static uint8_t cached_transfer_key[16];
+static uint64_t cached_next_send_counter = 1U;
+static uint64_t cached_last_seen_counter = 0U;
+static uint16_t cached_record_index = 0U;
+
+static uint64_t prng_counter = 0U;
 
 static uint32_t next_noise_u32(void)
 {
@@ -82,6 +113,201 @@ static bool constant_time_pin_match_fi(const unsigned char *pin)
     return false;
 }
 
+static uint32_t sample_entropy_word(void)
+{
+    uint32_t t = noise_state ^ (uint32_t)prng_counter;
+    t ^= (noise_state << 7U) ^ (noise_state >> 3U);
+    t ^= (uint32_t)(uintptr_t)&t;
+    t ^= (uint32_t)(CPUCLK_FREQ);
+    return t;
+}
+
+int security_rng_generate(uint8_t *out, uint32_t len)
+{
+    uint8_t digest[HASH_SIZE];
+    uint8_t seed[24];
+    uint32_t produced = 0U;
+
+    if (out == NULL || len == 0U) {
+        return -1;
+    }
+
+    while (produced < len) {
+        uint32_t entropy = sample_entropy_word();
+        prng_counter++;
+
+        memcpy(seed, &noise_state, sizeof(noise_state));
+        memcpy(seed + 4, &entropy, sizeof(entropy));
+        memcpy(seed + 8, &prng_counter, sizeof(prng_counter));
+        memcpy(seed + 16, &produced, sizeof(produced));
+        memcpy(seed + 20, &len, sizeof(len));
+
+        if (wc_Sha256Hash(seed, sizeof(seed), digest) != 0) {
+            memset(digest, 0, sizeof(digest));
+            memset(seed, 0, sizeof(seed));
+            return -1;
+        }
+
+        uint32_t chunk = len - produced;
+        if (chunk > sizeof(digest)) {
+            chunk = sizeof(digest);
+        }
+        memcpy(out + produced, digest, chunk);
+        produced += chunk;
+
+        noise_state ^= entropy ^ digest[0];
+    }
+
+    memset(digest, 0, sizeof(digest));
+    memset(seed, 0, sizeof(seed));
+    return 0;
+}
+
+static int derive_transfer_key_from_secret(uint8_t key_out[16])
+{
+    /*
+     * Global deployment key is generated offline in build secrets and injected
+     * into secrets.h so all boards in the same deployment share one transfer key.
+     */
+    if (key_out == NULL) {
+        return -1;
+    }
+
+    memcpy(key_out, TRANSFER_KEY, 16);
+    return 0;
+}
+
+static int persist_transfer_state(void)
+{
+    transfer_state_header_t header;
+    transfer_counter_record_t rec;
+    uint32_t addr = TRANSFER_STATE_FLASH_ADDR;
+
+    if (flash_erase_page(TRANSFER_STATE_FLASH_ADDR) != 0) {
+        return -1;
+    }
+
+    memset(&header, 0xFF, sizeof(header));
+    header.magic = TRANSFER_STATE_MAGIC;
+    header.version = TRANSFER_STATE_VERSION;
+    memcpy(header.key, cached_transfer_key, sizeof(cached_transfer_key));
+
+    if (flash_write(addr, &header, sizeof(header)) != 0) {
+        return -1;
+    }
+    addr += sizeof(header);
+
+    memset(&rec, 0xFF, sizeof(rec));
+    rec.type = TRANSFER_REC_TYPE_NEXT_SEND;
+    rec.value = cached_next_send_counter;
+    if (flash_write(addr, &rec, sizeof(rec)) != 0) {
+        return -1;
+    }
+    addr += sizeof(rec);
+
+    memset(&rec, 0xFF, sizeof(rec));
+    rec.type = TRANSFER_REC_TYPE_LAST_SEEN;
+    rec.value = cached_last_seen_counter;
+    if (flash_write(addr, &rec, sizeof(rec)) != 0) {
+        return -1;
+    }
+
+    cached_record_index = 2U;
+    return 0;
+}
+
+static int append_transfer_record(uint8_t type, uint64_t value)
+{
+    transfer_counter_record_t rec;
+    uint32_t addr;
+
+    if (cached_record_index >= TRANSFER_RECORD_CAPACITY) {
+        return persist_transfer_state();
+    }
+
+    addr = TRANSFER_STATE_FLASH_ADDR + sizeof(transfer_state_header_t) +
+           (cached_record_index * sizeof(transfer_counter_record_t));
+    memset(&rec, 0xFF, sizeof(rec));
+    rec.type = type;
+    rec.value = value;
+
+    if (flash_write(addr, &rec, sizeof(rec)) != 0) {
+        return -1;
+    }
+
+    cached_record_index++;
+    return 0;
+}
+
+static int load_or_init_transfer_state(void)
+{
+    transfer_state_header_t header;
+    transfer_counter_record_t rec;
+
+    if (transfer_state_loaded) {
+        return 0;
+    }
+
+    flash_read(TRANSFER_STATE_FLASH_ADDR, &header, sizeof(header));
+
+    if (header.magic != TRANSFER_STATE_MAGIC || header.version != TRANSFER_STATE_VERSION) {
+        if (derive_transfer_key_from_secret(cached_transfer_key) != 0) {
+            return -1;
+        }
+        cached_next_send_counter = 1U;
+        cached_last_seen_counter = 0U;
+        if (persist_transfer_state() != 0) {
+            memset(cached_transfer_key, 0, sizeof(cached_transfer_key));
+            return -1;
+        }
+        transfer_state_loaded = true;
+        return 0;
+    }
+
+    memcpy(cached_transfer_key, header.key, sizeof(cached_transfer_key));
+    cached_next_send_counter = 1U;
+    cached_last_seen_counter = 0U;
+    cached_record_index = 0U;
+
+    for (uint16_t i = 0; i < TRANSFER_RECORD_CAPACITY; i++) {
+        uint32_t addr = TRANSFER_STATE_FLASH_ADDR + sizeof(transfer_state_header_t) +
+                        (i * sizeof(transfer_counter_record_t));
+        flash_read(addr, &rec, sizeof(rec));
+
+        if (rec.type == 0xFFU) {
+            break;
+        }
+
+        if (rec.type == TRANSFER_REC_TYPE_NEXT_SEND) {
+            cached_next_send_counter = rec.value;
+        } else if (rec.type == TRANSFER_REC_TYPE_LAST_SEEN) {
+            cached_last_seen_counter = rec.value;
+        }
+
+        cached_record_index = (uint16_t)(i + 1U);
+    }
+
+    {
+        uint8_t expected_key[16];
+        if (derive_transfer_key_from_secret(expected_key) != 0) {
+            return -1;
+        }
+
+        /* Migrate any previously persisted per-device/random key state. */
+        if (memcmp(cached_transfer_key, expected_key, sizeof(expected_key)) != 0) {
+            memcpy(cached_transfer_key, expected_key, sizeof(expected_key));
+            if (persist_transfer_state() != 0) {
+                memset(expected_key, 0, sizeof(expected_key));
+                return -1;
+            }
+        }
+        memset(expected_key, 0, sizeof(expected_key));
+    }
+
+    transfer_state_loaded = true;
+    return 0;
+}
+
 bool check_pin(unsigned char *pin)
 {
     bool pin_valid = false;
@@ -120,4 +346,67 @@ bool validate_permission(uint16_t group_id, permission_enum_t perm) {
         }
     }
     return false; // deny by default
+}
+
+int get_or_create_transfer_key(uint8_t key_out[16])
+{
+    if (key_out == NULL) {
+        return -1;
+    }
+
+    /*
+     * Always derive transfer key from shared domain material at runtime so
+     * peers interoperate even if flash state was initialized by an older build.
+     */
+    return derive_transfer_key_from_secret(key_out);
+}
+
+int get_and_increment_transfer_counter(uint64_t *counter_out)
+{
+    uint64_t current;
+
+    if (counter_out == NULL) {
+        return -1;
+    }
+
+    if (load_or_init_transfer_state() != 0) {
+        return -1;
+    }
+
+    current = cached_next_send_counter;
+    if (current == TRANSFER_COUNTER_MAX) {
+        return -1;
+    }
+
+    cached_next_send_counter = current + 1U;
+    if (append_transfer_record(TRANSFER_REC_TYPE_NEXT_SEND, cached_next_send_counter) != 0) {
+        return -1;
+    }
+
+    *counter_out = current;
+    return 0;
+}
+
+int get_last_seen_counter(uint64_t *counter_out)
+{
+    if (counter_out == NULL) {
+        return -1;
+    }
+
+    if (load_or_init_transfer_state() != 0) {
+        return -1;
+    }
+
+    *counter_out = cached_last_seen_counter;
+    return 0;
+}
+
+int set_last_seen_counter(uint64_t counter)
+{
+    if (load_or_init_transfer_state() != 0) {
+        return -1;
+    }
+
+    cached_last_seen_counter = counter;
+    return append_transfer_record(TRANSFER_REC_TYPE_LAST_SEEN, counter);
 }

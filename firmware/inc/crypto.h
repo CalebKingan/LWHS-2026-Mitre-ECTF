@@ -67,4 +67,18 @@ int decrypt_sym(uint8_t *ciphertext, size_t len, uint8_t *key, uint8_t *plaintex
  * @return 0 on success, non-zero for other error
  */
 int hash(void *data, size_t len, uint8_t *hash_out);
+
+int encrypt_transfer_gcm(const uint8_t *pt, size_t pt_len,
+                         const uint8_t *key,
+                         const uint8_t nonce[12],
+                         const uint8_t *aad, size_t aad_len,
+                         uint8_t *ct_out,
+                         uint8_t tag_out[16]);
+
+int decrypt_transfer_gcm(const uint8_t *ct, size_t ct_len,
+                         const uint8_t *key,
+                         const uint8_t nonce[12],
+                         const uint8_t *aad, size_t aad_len,
+                         const uint8_t tag[16],
+                         uint8_t *pt_out);
 #endif // ECTF_CRYPTO_H

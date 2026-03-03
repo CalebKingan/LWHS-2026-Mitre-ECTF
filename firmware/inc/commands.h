@@ -30,6 +30,10 @@ typedef unsigned char pin_t[6];
 // calculates the length of a list packet based on the number of files listed
 #define LIST_PKT_LEN(num_files) (sizeof(uint32_t) + (sizeof(file_metadata_t) * (num_files)))
 
+#define TRANSFER_GCM_NONCE_SIZE 12
+#define TRANSFER_GCM_TAG_SIZE 16
+#define TRANSFER_CIPHERTEXT_MAX_LEN MAX_CONTENTS_SIZE
+
 #pragma pack(push, 1) // Tells the compiler not to pad the struct members
 // for more information on what struct padding does, see:
 // https://www.gnu.org/software/c-intro-and-ref/manual/html_node/Structure-Layout.html
@@ -78,9 +82,21 @@ typedef struct {
     group_permission_t permissions[MAX_PERMS];
 } receive_request_t;
 
+/* Authenticated transfer payload format: nonce || counter || tag || ct_len || ciphertext */
+typedef struct {
+    uint8_t nonce[TRANSFER_GCM_NONCE_SIZE];
+    uint64_t counter;
+    uint8_t tag[TRANSFER_GCM_TAG_SIZE];
+    uint16_t ct_len;
+    uint8_t ciphertext[TRANSFER_CIPHERTEXT_MAX_LEN];
+} transfer_blob_t;
+
 typedef struct {
     uint8_t uuid[UUID_SIZE];
-    file_t file;
+    group_id_t group_id;
+    char name[MAX_NAME_SIZE];
+    uint16_t contents_len;
+    transfer_blob_t blob;
 } receive_response_t;
 
 typedef struct {
