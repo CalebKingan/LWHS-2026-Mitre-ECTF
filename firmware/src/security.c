@@ -166,20 +166,14 @@ int security_rng_generate(uint8_t *out, uint32_t len)
 static int derive_transfer_key_from_secret(uint8_t key_out[16])
 {
     /*
-     * Transfer key must be identical across devices so boards with different
-     * local unlock PINs can still exchange files. Derive from shared firmware
-     * domain material (not per-device PIN) and persist to flash.
+     * Global deployment key is generated offline in build secrets and injected
+     * into secrets.h so all boards in the same deployment share one transfer key.
      */
-    static const uint8_t transfer_domain[] = "LWHS_ECTF_2026_TRANSFER_KEY_V1";
-    uint8_t material[HASH_SIZE];
-
-    if (wc_Sha256Hash(transfer_domain, sizeof(transfer_domain), material) != 0) {
-        memset(material, 0, sizeof(material));
+    if (key_out == NULL) {
         return -1;
     }
 
-    memcpy(key_out, material, 16);
-    memset(material, 0, sizeof(material));
+    memcpy(key_out, TRANSFER_KEY, 16);
     return 0;
 }
 

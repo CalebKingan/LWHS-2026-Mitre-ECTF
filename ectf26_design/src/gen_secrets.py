@@ -11,6 +11,7 @@ Copyright: Copyright (c) 2026 The MITRE Corporation
 """
 
 import argparse
+import os
 import json
 from pathlib import Path
 
@@ -38,9 +39,10 @@ def gen_secrets(groups: list[int]) -> bytes:
     # Create the secrets object
     # You can change this to generate any secret material
     # The secrets file will never be shared with attackers
+    transfer_key = os.urandom(16)
     secrets = {
         "groups": groups,
-        "some_secrets": "EXAMPLE",
+        "transfer_key_hex": transfer_key.hex(),
     }
 
     # NOTE: if you choose to use JSON for your file type, you will not
