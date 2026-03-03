@@ -360,12 +360,11 @@ int get_or_create_transfer_key(uint8_t key_out[16])
         return -1;
     }
 
-    if (load_or_init_transfer_state() != 0) {
-        return -1;
-    }
-
-    memcpy(key_out, cached_transfer_key, 16);
-    return 0;
+    /*
+     * Always derive transfer key from shared domain material at runtime so
+     * peers interoperate even if flash state was initialized by an older build.
+     */
+    return derive_transfer_key_from_secret(key_out);
 }
 
 int get_and_increment_transfer_counter(uint64_t *counter_out)
