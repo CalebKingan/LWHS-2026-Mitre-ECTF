@@ -79,6 +79,11 @@ static void build_transfer_aad(transfer_aad_t *aad,
                                uint16_t contents_len,
                                uint64_t counter)
 {
+    /*
+     * AAD bytes must match exactly between sender and receiver.
+     * Zero the whole struct so any compiler padding bytes are deterministic.
+     */
+    memset(aad, 0, sizeof(*aad));
     memcpy(aad->uuid, uuid, UUID_SIZE);
     aad->group_id = group_id;
     aad->contents_len = contents_len;
