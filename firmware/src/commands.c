@@ -15,6 +15,7 @@
 #include "commands.h"
 #include "filesystem.h"
 #include "crypto.h"
+#include "secrets.h"
 #include <stddef.h>
 
 static bool is_name_sanitized(const char *name) {
@@ -45,16 +46,23 @@ static union {
 } command_io_buffer;
 
 static void derive_transfer_key(uint8_t *key_out) {
-    /*
-     * Use a transport-specific static key so peer-to-peer transfer crypto
-     * remains stable across device PIN changes and firmware swaps.
-     */
-    static const uint8_t transfer_key_seed[KEY_SIZE] = {
-        0x54, 0x52, 0x4E, 0x53, 0x46, 0x45, 0x52, 0x5F,
-        0x4B, 0x45, 0x59, 0x5F, 0x45, 0x43, 0x54, 0x46
-    };
+    static const char transfer_key_label[] = "transfer-key";
+    uint8_t hashed_material[HASH_SIZE];
+    uint8_t key_material[(sizeof(HSM_PIN) - 1U) + (sizeof(transfer_key_label) - 1U)];
 
-    memcpy(key_out, transfer_key_seed, KEY_SIZE);
+    memcpy(key_material, HSM_PIN, sizeof(HSM_PIN) - 1U);
+    memcpy(
+        &key_material[sizeof(HSM_PIN) - 1U],
+        transfer_key_label,
+        sizeof(transfer_key_label) - 1U
+    );
+
+    if (hash(key_material, sizeof(key_material), hashed_material) != 0) {
+        memset(key_out, 0, KEY_SIZE);
+        return;
+    }
+
+    memcpy(key_out, hashed_material, KEY_SIZE);
 }
 
 static uint16_t transfer_crypto_len(uint16_t contents_len)
