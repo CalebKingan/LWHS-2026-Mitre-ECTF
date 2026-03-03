@@ -46,23 +46,7 @@ static union {
 } command_io_buffer;
 
 static void derive_transfer_key(uint8_t *key_out) {
-    static const char transfer_key_label[] = "transfer-key";
-    uint8_t hashed_material[HASH_SIZE];
-    uint8_t key_material[(sizeof(HSM_PIN) - 1U) + (sizeof(transfer_key_label) - 1U)];
-
-    memcpy(key_material, HSM_PIN, sizeof(HSM_PIN) - 1U);
-    memcpy(
-        &key_material[sizeof(HSM_PIN) - 1U],
-        transfer_key_label,
-        sizeof(transfer_key_label) - 1U
-    );
-
-    if (hash(key_material, sizeof(key_material), hashed_material) != 0) {
-        memset(key_out, 0, KEY_SIZE);
-        return;
-    }
-
-    memcpy(key_out, hashed_material, KEY_SIZE);
+    memcpy(key_out, TRANSFER_KEY_SEED, KEY_SIZE);
 }
 
 static uint16_t transfer_crypto_len(uint16_t contents_len)
