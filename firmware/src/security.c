@@ -18,12 +18,11 @@
 
 /*
  * Keep countermeasures lightweight so command latency stays within protocol
- * expectations while still adding masking/noise and FI resistance.
+ * expectations while still adding jitter and FI-resistant decisions.
  */
-#define PIN_MASKING_ROUNDS 2U
 #define NOISE_MAX_DELAY_CYCLES (CPUCLK_FREQ / 100000U) /* <= 320 cycles */
 #define FI_COMPARE_REPETITIONS 2U
-#define INVALID_PIN_DELAY_CYCLES (CPUCLK_FREQ * INVALID_PIN_DELAY)
+#define INVALID_PIN_DELAY_CYCLES ((CPUCLK_FREQ / 1000U) * INVALID_PIN_DELAY_MS)
 #define FI_DECISION_TRUE 0x13579BDFU
 #define FI_DECISION_FALSE 0xECA86420U
 
@@ -51,33 +50,26 @@ static void apply_fake_noise_delay(void)
     (void)sink;
 }
 
-/* One masked constant-time compare pass. Returns 0 on match, non-zero otherwise. */
-static uint8_t constant_time_pin_match_masked_once(const unsigned char *pin)
+/* One constant-time compare pass. Returns 0 on match, non-zero otherwise. */
+static uint8_t constant_time_pin_match_once(const unsigned char *pin)
 {
-    volatile uint8_t diff = 0;
+    volatile uint8_t diff = 0U;
 
-    for (uint32_t round = 0; round < PIN_MASKING_ROUNDS; round++) {
-        uint8_t round_mask = (uint8_t)next_noise_u32();
-
-        for (uint32_t i = 0; i < PIN_LENGTH; i++) {
-            uint8_t lane_mask = (uint8_t)(round_mask ^ (uint8_t)next_noise_u32());
-            uint8_t masked_pin = (uint8_t)(pin[i] ^ lane_mask);
-            uint8_t masked_ref = (uint8_t)(((uint8_t)HSM_PIN[i]) ^ lane_mask);
-            diff |= (uint8_t)(masked_pin ^ masked_ref);
-        }
+    for (uint32_t i = 0; i < PIN_LENGTH; i++) {
+        diff |= (uint8_t)(pin[i] ^ (uint8_t)HSM_PIN[i]);
     }
 
     return diff;
 }
 
 /* Repeat compare and require agreement to harden against transient FI glitches. */
-static bool constant_time_pin_match_masked_fi(const unsigned char *pin)
+static bool constant_time_pin_match_fi(const unsigned char *pin)
 {
     uint8_t diff_or = 0;
     uint8_t diff_and = 0xFFU;
 
     for (uint32_t rep = 0; rep < FI_COMPARE_REPETITIONS; rep++) {
-        uint8_t diff = constant_time_pin_match_masked_once(pin);
+        uint8_t diff = constant_time_pin_match_once(pin);
         diff_or |= diff;
         diff_and &= diff;
     }
@@ -97,7 +89,7 @@ bool check_pin(unsigned char *pin)
     volatile uint32_t decision_inv = ~FI_DECISION_FALSE;
 
     if (pin != NULL) {
-        pin_valid = constant_time_pin_match_masked_fi(pin);
+        pin_valid = constant_time_pin_match_fi(pin);
     }
 
     if (pin_valid) {

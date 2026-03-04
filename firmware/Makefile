@@ -9,10 +9,6 @@ BUILDDIR ?= /tmp/build
 VPATH = "src"
 LINKERFILE = "firmware.ld"
 
-# to download wolfssl for the crypto , `cd ./firmware/ && git clone https://github.com/wolfSSL/wolfssl`
-# then set this variable to 1
-CRYPTO_EXAMPLE = 0
-
 OBJECTS = $(BUILDDIR)/HSM.so \
     $(BUILDDIR)/uart.so \
     $(BUILDDIR)/ti_msp_dl_config.so \
@@ -21,13 +17,9 @@ OBJECTS = $(BUILDDIR)/HSM.so \
     $(BUILDDIR)/host_messaging.so \
     $(BUILDDIR)/security.so \
     $(BUILDDIR)/filesystem.so \
-    $(BUILDDIR)/commands.so
+    $(BUILDDIR)/commands.so \
+    $(BUILDDIR)/crypto.so
 
-ifeq ($(CRYPTO_EXAMPLE), 1)
-OBJECTS += $(BUILDDIR)/crypto.so
-
-# change C flags
-CFLAGS += -DCRYPTO_EXAMPLE=1
 CFLAGS += -DNO_WOLFSSL_DIR
 CFLAGS += -DSINGLE_THREADED
 # From https://www.wolfssl.com/documentation/manuals/wolfssl/chapter02.html#building-with-gcc-arm
@@ -35,6 +27,9 @@ CFLAGS += -DHAVE_PK_CALLBACKS
 CFLAGS += -DWOLFSSL_USER_IO
 CFLAGS += -DNO_WRITEV -DTIME_T_NOT_64BIT
 CFLAGS += -DNO_FILESYSTEM
+# Suppress wolfSSL config and harden warnings when using direct CFLAGS config.
+CFLAGS += -DWOLFSSL_NO_OPTIONS_H
+CFLAGS += -DWC_NO_HARDEN
 # tells wolfssl that we will handle RNG on the baremetal target
 # user will need to implement the callbacks
 CFLAGS += -DNO_DEV_RANDOM
@@ -47,7 +42,6 @@ CFLAGS += -I./wolfssl
 # we need to build these objects for the crypto
 OBJECTS += $(WOLFSSL_INC)/aes.o $(WOLFSSL_INC)/hash.o
 OBJECTS += $(WOLFSSL_INC)/sha256.o $(WOLFSSL_INC)/cryptocb.o
-endif
 
 NAME = hsm
 
@@ -84,12 +78,9 @@ $(BUILDDIR)/%.so: ./src/%.c | $(BUILDDIR)
 	@ echo Building $@
 	@ $(CC) $(CFLAGS) -c $< -o $@
 
-# if compiling with the crypto example, compile all crypto objects
-ifeq ($(CRYPTO_EXAMPLE), 1)
 $(WOLFSSL_INC)/%.o: $(WOLFSSL_INC)/%.c
 	@ echo Building $@
 	@ $(CC) $(CFLAGS) -c $< -o $@
-endif
 
 $(BUILDDIR)/$(NAME).elf: $(OBJECTS)
 	@ echo linking $@

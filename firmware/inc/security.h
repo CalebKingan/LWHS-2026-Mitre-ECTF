@@ -18,8 +18,8 @@
 
 #define MAX_PERMS 8
 #define PIN_LENGTH 6
-#define INVALID_PIN_DELAY 5U
-
+#define INVALID_PIN_DELAY_MS 5000U
+#define INVALID_PIN_DELAY_CYCLES ((CPUCLK_FREQ / 1000U) * INVALID_PIN_DELAY_MS)
 typedef enum {
     PERM_READ = 'R',
     PERM_WRITE = 'W',

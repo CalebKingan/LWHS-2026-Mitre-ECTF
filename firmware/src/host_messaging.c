@@ -185,6 +185,7 @@ int write_packet(int uart_id, msg_type_t type, const void *buf, uint16_t len) {
 */
 int read_packet(int uart_id, msg_type_t* cmd, void *buf, uint16_t *len) {
     msg_header_t header = {0};
+    uint16_t expected_len = 0;
 
     // cmd must be a valid pointer
     if (cmd == NULL) {
@@ -195,9 +196,36 @@ int read_packet(int uart_id, msg_type_t* cmd, void *buf, uint16_t *len) {
 
     *cmd = header.cmd;
 
+    if (header.cmd != ACK_MSG) {
+        if (write_ack(uart_id) != MSG_OK) {
+            return MSG_NO_ACK;
+        }
+    }
+
+    if (len != NULL) {
+        expected_len = *len;
+    }
+
     if (len != NULL) {
         if (*len && header.len > *len) {
             *len = 0;
+            if (header.cmd != ACK_MSG && header.len != 0U) {
+                uint8_t discard[32];
+                uint16_t remaining = header.len;
+
+                while (remaining > 0U) {
+                    uint16_t chunk = remaining > sizeof(discard) ? sizeof(discard) : remaining;
+                    if (read_bytes(uart_id, discard, chunk) != MSG_OK) {
+                        return MSG_NO_ACK;
+                    }
+                    remaining -= chunk;
+                }
+
+                if (write_ack(uart_id) != MSG_OK) {
+                    return MSG_NO_ACK;
+                }
+            }
+
             return MSG_BAD_LEN;
         }
 
@@ -205,10 +233,21 @@ int read_packet(int uart_id, msg_type_t* cmd, void *buf, uint16_t *len) {
     }
 
     if (header.cmd != ACK_MSG) {
-        write_ack(uart_id);  // ACK the header
         if (header.len && buf != NULL) {
             if (read_bytes(uart_id, buf, header.len) != MSG_OK) {
                 return MSG_NO_ACK;
+            }
+        }
+        if (header.len && buf == NULL && expected_len == 0U) {
+            uint8_t discard[32];
+            uint16_t remaining = header.len;
+
+            while (remaining > 0U) {
+                uint16_t chunk = remaining > sizeof(discard) ? sizeof(discard) : remaining;
+                if (read_bytes(uart_id, discard, chunk) != MSG_OK) {
+                    return MSG_NO_ACK;
+                }
+                remaining -= chunk;
             }
         }
         if (header.len) {
@@ -219,4 +258,3 @@ int read_packet(int uart_id, msg_type_t* cmd, void *buf, uint16_t *len) {
     }
     return MSG_OK;
 }
-

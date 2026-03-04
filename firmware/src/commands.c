@@ -14,6 +14,9 @@
 #include "host_messaging.h"
 #include "commands.h"
 #include "filesystem.h"
+#include "crypto.h"
+#include "secrets.h"
+#include <stddef.h>
 
 static bool is_name_sanitized(const char *name) {
     bool has_terminator = false;
@@ -37,6 +40,55 @@ static bool is_name_sanitized(const char *name) {
 /* IMPORTANT COMPONENTS FROM HSM.c */
 // extern file_t hsm_status[MAX_FILE_COUNT];
 static file_t current_file;
+static union {
+    read_response_t read_file_response;
+    receive_response_t transfer_file_response;
+} command_io_buffer;
+
+static void derive_transfer_key(uint8_t *key_out) {
+    memcpy(key_out, TRANSFER_KEY_SEED, KEY_SIZE);
+}
+
+static uint16_t transfer_crypto_len(uint16_t contents_len)
+{
+    uint16_t bounded_len = contents_len;
+
+    if (bounded_len > MAX_CONTENTS_SIZE) {
+        bounded_len = MAX_CONTENTS_SIZE;
+    }
+
+    if (bounded_len == 0U) {
+        return BLOCK_SIZE;
+    }
+
+    uint16_t rem = bounded_len % BLOCK_SIZE;
+    if (rem == 0U) {
+        return bounded_len;
+    }
+
+    return (uint16_t)(bounded_len + (BLOCK_SIZE - rem));
+}
+
+static int transform_transfer_contents(uint8_t *contents, uint16_t contents_len, bool encrypting) {
+    uint8_t key[KEY_SIZE];
+    int result;
+
+    if (contents == NULL) {
+        return -1;
+    }
+
+    derive_transfer_key(key);
+    if (encrypting) {
+        result = encrypt_sym(contents, transfer_crypto_len(contents_len), key, contents);
+    } else {
+        result = decrypt_sym(contents, transfer_crypto_len(contents_len), key, contents);
+    }
+
+    if (result != 0) {
+        return result;
+    }
+    return 0;
+}
 
 /**********************************************************
  ******************** HELPER FUNCTIONS ********************
@@ -49,18 +101,39 @@ static file_t current_file;
  *      which to store the results
  */
 void generate_list_files(list_response_t *file_list) {
+    typedef struct {
+        uint32_t in_use;
+        group_id_t group_id;
+        char name[MAX_NAME_SIZE];
+    } file_list_header_t;
+
     file_list->n_files = 0;
-    file_t temp_file;
 
     // Loop through all files on the system
     for (uint8_t i = 0; i < MAX_FILE_COUNT; i++) {
-        // Check if the file is in use
-        if (is_slot_in_use(i)) {
-            read_file(i, &temp_file);
+        const filesystem_entry_t *entry = get_file_metadata(i);
+        file_list_header_t file_header;
 
+        if (entry == NULL || file_list->n_files >= MAX_FILE_COUNT) {
+            continue;
+        }
+
+        if (entry->length < offsetof(file_t, contents) || entry->length > STORED_FILE_SIZE) {
+            continue;
+        }
+
+        if (entry->flash_addr != FILE_START_PAGE_FROM_SLOT(i)) {
+            continue;
+        }
+
+        memset(&file_header, 0, sizeof(file_header));
+        flash_read(entry->flash_addr, &file_header, sizeof(file_header));
+
+        // Check if the file is in use using header metadata only.
+        if (file_header.in_use == FILE_IN_USE) {
             file_list->metadata[file_list->n_files].slot = i;
-            file_list->metadata[file_list->n_files].group_id = temp_file.group_id;
-            memcpy(file_list->metadata[file_list->n_files].name, temp_file.name, MAX_NAME_SIZE);
+            file_list->metadata[file_list->n_files].group_id = file_header.group_id;
+            memcpy(file_list->metadata[file_list->n_files].name, file_header.name, MAX_NAME_SIZE);
             file_list->n_files++;
         }
     }
@@ -87,15 +160,15 @@ int list(uint16_t pkt_len, uint8_t *buf) {
     list_command_t *command = (list_command_t*)buf;
     list_response_t file_list;
 
-    memset(&file_list, 0, sizeof(file_list));
-
-    // copy relevant fields into the final struct
-    generate_list_files(&file_list);
-
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
         return -1;
     }
+
+    memset(&file_list, 0, sizeof(file_list));
+
+    // copy relevant fields into the final struct
+    generate_list_files(&file_list);
 
     // write success packet with list
     pkt_len_t length = LIST_PKT_LEN(file_list.n_files);
@@ -118,8 +191,6 @@ int read(uint16_t pkt_len, uint8_t *buf) {
     }
 
     read_command_t *command = (read_command_t*)buf;
-    read_response_t file_info;
-    file_t curr_file;
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
@@ -132,27 +203,27 @@ int read(uint16_t pkt_len, uint8_t *buf) {
     }
 
     // zeroizing memory is a pretty good practice
-    memset(&file_info, 0, sizeof(read_response_t));
+    memset(&command_io_buffer.read_file_response, 0, sizeof(read_response_t));
 
-    if (read_file(command->slot, &curr_file) < 0) {
+    if (read_file(command->slot, &current_file) < 0) {
         print_error("Failed to read file");
         return -1;
     }
     // copy structure of the persistent file
-    memcpy(file_info.name, &curr_file.name, MAX_NAME_SIZE);
-    uint16_t out_len = curr_file.contents_len;
+    memcpy(command_io_buffer.read_file_response.name, &current_file.name, MAX_NAME_SIZE);
+    uint16_t out_len = current_file.contents_len;
     if (out_len > MAX_CONTENTS_SIZE) out_len = MAX_CONTENTS_SIZE;
 
-    memcpy(file_info.contents, curr_file.contents, out_len);
+    memcpy(command_io_buffer.read_file_response.contents, current_file.contents, out_len);
     pkt_len_t length = MAX_NAME_SIZE + out_len;
 
-    if (!validate_permission(curr_file.group_id, PERM_READ)) {
+    if (!validate_permission(current_file.group_id, PERM_READ)) {
         print_error("Invalid permission");
         return -1;
     }
 
     // write a success message with the file information
-    write_packet(CONTROL_INTERFACE, READ_MSG, &file_info, length);
+    write_packet(CONTROL_INTERFACE, READ_MSG, &command_io_buffer.read_file_response, length);
     return 0;
 }
 
@@ -171,8 +242,6 @@ int write(uint16_t pkt_len, uint8_t *buf) {
     }
 
     write_command_t *command = (write_command_t*)buf;
-    int ret;
-    file_t curr_file;
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
@@ -205,7 +274,7 @@ int write(uint16_t pkt_len, uint8_t *buf) {
     }
 
     create_file(
-        &curr_file,
+        &current_file,
         command->group_id,
         command->name,
         command->contents_len,
@@ -213,7 +282,7 @@ int write(uint16_t pkt_len, uint8_t *buf) {
     );
 
     // Store the file persistently
-    if (write_file(command->slot, &curr_file, command->uuid) < 0) {
+    if (write_file(command->slot, &current_file, command->uuid) < 0) {
         print_error("Error storing file");
         return -1;
     }
@@ -239,10 +308,8 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
 
     receive_command_t *command = (receive_command_t *)buf;
     receive_request_t request;
-    receive_response_t recv_resp;
     msg_type_t cmd;
     uint16_t len_recv_msg;
-    int ret;
 
     if (!check_pin(command->pin)) {
         print_error("Invalid pin");
@@ -255,7 +322,7 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
     }
 
     // zeroize the buffers we will use
-    memset(&recv_resp, 0, sizeof(recv_resp));
+    memset(&command_io_buffer.transfer_file_response, 0, sizeof(command_io_buffer.transfer_file_response));
     memset(&request, 0, sizeof(request));
 
     // prep request to neighbor
@@ -266,14 +333,14 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
     write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, (void *)&request, sizeof(receive_request_t));
 
     // limits receiving message size
-    len_recv_msg = sizeof(recv_resp);
+    len_recv_msg = sizeof(command_io_buffer.transfer_file_response);
 
     //receive the response message
-    if (read_packet(TRANSFER_INTERFACE, &cmd, &recv_resp, &len_recv_msg) != MSG_OK) {
+    if (read_packet(TRANSFER_INTERFACE, &cmd, &command_io_buffer.transfer_file_response, &len_recv_msg) != MSG_OK) {
         print_error("Failed to receive response");
         return -1;
     }
-    if (len_recv_msg != sizeof(recv_resp)){
+    if (len_recv_msg != sizeof(command_io_buffer.transfer_file_response)){
          print_error("Malformed recieved response length");
         return -1;
     }
@@ -282,16 +349,24 @@ int receive(uint16_t pkt_len, uint8_t *buf) {
         print_error("Opcode mismatch");
         return -1;
     }
+
+    if (transform_transfer_contents(
+            command_io_buffer.transfer_file_response.file.contents,
+            command_io_buffer.transfer_file_response.file.contents_len,
+            false) != 0) {
+        print_error("Failed to decrypt transfer contents");
+        return -1;
+    }
     
     // Enforce local receive permission before writing file
-    if (!validate_permission(recv_resp.file.group_id, PERM_RECEIVE)) {
+    if (!validate_permission(command_io_buffer.transfer_file_response.file.group_id, PERM_RECEIVE)) {
         print_error("Permission denied: cannot receive this group");
         return -1;
     }
 
 
     // write that file into the file system
-    if (write_file(command->write_slot, &recv_resp.file, recv_resp.uuid) < 0) {
+    if (write_file(command->write_slot, &command_io_buffer.transfer_file_response.file, command_io_buffer.transfer_file_response.uuid) < 0) {
         print_error("Writing received file failed");
         return -1;
     }
@@ -374,7 +449,6 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
     pkt_len_t write_length, read_length;
     list_response_t file_list;
     receive_request_t *command;
-    receive_response_t recv_resp;
     const filesystem_entry_t *metadata;
 
     read_length = sizeof(uart_buf);
@@ -418,14 +492,14 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
             }
 
             // Read the requested file first so we know its group_id
-            if (read_file(command->slot, &recv_resp.file) < 0) {
+            if (read_file(command->slot, &command_io_buffer.transfer_file_response.file) < 0) {
                 SEND_TRANSFER_ERROR("Failed to read file");
             }
 
             // Enforce requester's RECEIVE permission before sending file
             bool allowed = false;
             for (int i = 0; i < MAX_PERMS; i++) {
-                if (command->permissions[i].group_id == recv_resp.file.group_id &&
+                if (command->permissions[i].group_id == command_io_buffer.transfer_file_response.file.group_id &&
                     command->permissions[i].receive) {
                     allowed = true;
                     break;
@@ -440,10 +514,17 @@ int listen(uint16_t pkt_len, uint8_t *buf) {
                 SEND_TRANSFER_ERROR("Getting metadata failed");
             }
 
-            memcpy(&recv_resp.uuid, &metadata->uuid, UUID_SIZE);
+            memcpy(&command_io_buffer.transfer_file_response.uuid, &metadata->uuid, UUID_SIZE);
+
+            if (transform_transfer_contents(
+                    command_io_buffer.transfer_file_response.file.contents,
+                    command_io_buffer.transfer_file_response.file.contents_len,
+                    true) != 0) {
+                SEND_TRANSFER_ERROR("Failed to encrypt transfer contents");
+            }
 
             write_length = sizeof(receive_response_t);
-            write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, &recv_resp, write_length);
+            write_packet(TRANSFER_INTERFACE, RECEIVE_MSG, &command_io_buffer.transfer_file_response, write_length);
             break;
         }
         default:
