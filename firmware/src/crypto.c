@@ -11,23 +11,9 @@
  * @copyright Copyright (c) 2026 The MITRE Corporation
  */
 
-#if CRYPTO_EXAMPLE
-
 #include "crypto.h"
 #include "security.h"
 #include <stdint.h>
-#include <string.h>
-
-static void derive_iv(uint8_t *key, uint8_t *iv) {
-    uint8_t full_hash[WC_SHA256_DIGEST_SIZE] = {0};
-
-    /*
-     * Derive a non-zero IV from the key material so we can avoid ECB mode
-     * without changing the external function signatures.
-     */
-    wc_Sha256Hash(key, KEY_SIZE, full_hash);
-    memcpy(iv, full_hash, BLOCK_SIZE);
-}
 
 
 /******************************** FUNCTION PROTOTYPES ********************************/
@@ -46,7 +32,6 @@ static void derive_iv(uint8_t *key, uint8_t *iv) {
  */
 int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertext) {
     Aes ctx; // Context for encryption
-    uint8_t iv[BLOCK_SIZE] = {0};
     int result; // Library result
 
     // Ensure valid length
@@ -56,10 +41,10 @@ int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertex
     if (len == 0 || len % BLOCK_SIZE)
         return -1;
 
-    derive_iv(key, iv);
+    static const uint8_t zero_iv[BLOCK_SIZE] = {0};
 
     // Set the key for encryption
-    result = wc_AesSetKey(&ctx, key, KEY_SIZE, iv, AES_ENCRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, zero_iv, AES_ENCRYPTION);
     if (result != 0)
         return result; // Report error
 
@@ -81,7 +66,6 @@ int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertex
  */
 int decrypt_sym(uint8_t *ciphertext, size_t len, uint8_t *key, uint8_t *plaintext) {
     Aes ctx; // Context for decryption
-    uint8_t iv[BLOCK_SIZE] = {0};
     int result; // Library result
 
     // Ensure valid length
@@ -91,10 +75,10 @@ int decrypt_sym(uint8_t *ciphertext, size_t len, uint8_t *key, uint8_t *plaintex
     if (len == 0 || len % BLOCK_SIZE)
         return -1;
 
-    derive_iv(key, iv);
+    static const uint8_t zero_iv[BLOCK_SIZE] = {0};
 
     // Set the key for decryption
-    result = wc_AesSetKey(&ctx, key, KEY_SIZE, iv, AES_DECRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, zero_iv, AES_DECRYPTION);
     if (result != 0)
         return result; // Report error
 
@@ -117,5 +101,3 @@ int hash(void *data, size_t len, uint8_t *hash_out) {
 
     return wc_Sha256Hash((uint8_t *)data, len, hash_out);
 }
-
-#endif

@@ -17,7 +17,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     make \
     wget \
     build-essential \
-    unzip
+    unzip \ 
+    git
 
 ENV MSPM0_SDK_INSTALL_DIR=/opt/mspm0-sdk-mspm0_sdk_2_06_00_05
 ENV TICLANG_ARMCOMPILER=/opt/ti-cgt-armllvm_4.0.3.LTS

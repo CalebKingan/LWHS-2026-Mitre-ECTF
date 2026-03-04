@@ -55,7 +55,7 @@ typedef struct {
     unsigned int flash_addr;
 } filesystem_entry_t;
 
-static filesystem_entry_t FILE_ALLOCATION_TABLE[MAX_FILE_COUNT];
+extern filesystem_entry_t FILE_ALLOCATION_TABLE[MAX_FILE_COUNT];
 
 /**********************************************************
  *********** END FUNCTIONALLY DEFINED ELEMENTS ************

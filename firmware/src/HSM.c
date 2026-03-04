@@ -25,17 +25,7 @@
 #include "status_led.h"
 #include "uart.h"
 
-/* Code between this #ifdef and the subsequent #endif will
-*  be ignored by the compiler if CRYPTO_EXAMPLE is not set in
-*  the Makefile. */
-#ifdef CRYPTO_EXAMPLE
-/* The crypto example included with the reference design is
-*  intended to be an example of how you *may* use cryptography in your
-*  design. You are not limited nor required to use this interface in
-*  your design. It is recommended for newer teams to start by only using
-*  the simple crypto library until they have a working design. */
 #include "crypto.h"
-#endif  //CRYPTO_EXAMPLE
 
 /**********************************************************
  ************************ GLOBALS *************************
@@ -43,10 +33,6 @@
 
 static unsigned char uart_buf[MAX_MSG_SIZE];
 
-/* Code between this #ifdef and the subsequent #endif will
-*  be ignored by the compiler if CRYPTO_EXAMPLE is not set in
-*  the projectk.mk file. */
-#ifdef CRYPTO_EXAMPLE
 void crypto_example(void) {
     // Example of how to utilize included crypto.h
 
@@ -61,7 +47,7 @@ void crypto_example(void) {
     char output_buf[128] = {0};
 
     // Zero out the key
-    bzero(key, BLOCK_SIZE);
+    memset(key, 0, BLOCK_SIZE);
 
     // Encrypt example data and print out
     encrypt_sym((uint8_t*)data, BLOCK_SIZE, key, ciphertext);
@@ -80,7 +66,6 @@ void crypto_example(void) {
     sprintf(output_buf, "Decrypted message: %s\n", decrypted);
     print_debug(output_buf);
 }
-#endif  //CRYPTO_EXAMPLE
 
 /**********************************************************
  ********************* CORE FUNCTIONS *********************
@@ -141,13 +126,6 @@ int main(void) {
 
         // Handle list command
         case LIST_MSG:
-
-#ifdef CRYPTO_EXAMPLE
-            // Run the crypto example
-            // TODO: Remove this from your design
-            crypto_example();
-#endif // CRYPTO_EXAMPLE
-
             STATUS_LED_OFF();
             list(pkt_len, uart_buf);
             break;
