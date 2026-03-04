@@ -12,6 +12,7 @@ Copyright: Copyright (c) 2026 The MITRE Corporation
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from loguru import logger
@@ -35,11 +36,20 @@ def gen_secrets(groups: list[int]) -> bytes:
     # TODO: Update this function to generate any system-wide secrets needed by
     #   your design
 
+    # Generate a random transfer key so each device build has a unique
+    # symmetric key instead of the static hardcoded seed used in the
+    # reference design.  The key will be hex-encoded since we're using JSON.
+    KEY_SIZE = 16  # must match firmware definition
+    transfer_key_bytes = os.urandom(KEY_SIZE)
+    transfer_key_hex = transfer_key_bytes.hex()
+
     # Create the secrets object
     # You can change this to generate any secret material
     # The secrets file will never be shared with attackers
     secrets = {
         "groups": groups,
+        "transfer_key": transfer_key_hex,
+        # example field kept for backwards compatibility / debugging
         "some_secrets": "EXAMPLE",
     }
 
