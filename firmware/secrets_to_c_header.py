@@ -89,6 +89,8 @@ def secrets_to_c_header(
 
     transfer_key_seed = hashlib.sha256(secrets + b"transfer-key").digest()[:16]
     seed_initializer = ", ".join(f"0x{b:02x}" for b in transfer_key_seed)
+    transfer_iv_seed = hashlib.sha256(secrets + b"transfer-iv").digest()[:16]
+    iv_initializer = ", ".join(f"0x{b:02x}" for b in transfer_iv_seed)
 
     with open(os.path.join(path, "secrets.h"), 'w') as f:
         f.write("#ifndef __SECRETS_H__\n")
@@ -96,6 +98,7 @@ def secrets_to_c_header(
         f.write('#include "security.h"\n\n')
         f.write(f'#define HSM_PIN "{hsm_pin}"\n\n')
         f.write(f"static const unsigned char TRANSFER_KEY_SEED[16] = {{{seed_initializer}}};\n\n")
+        f.write(f"static const unsigned char TRANSFER_IV[16] = {{{iv_initializer}}};\n\n")
         f.write("const static group_permission_t global_permissions[MAX_PERMS] = {\n")
         for i, perm in enumerate(permissions):
             f.write(
