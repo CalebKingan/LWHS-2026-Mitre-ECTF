@@ -12,6 +12,7 @@
  */
 
 #include "crypto.h"
+#include "secrets.h"
 #include "security.h"
 #include <stdint.h>
 
@@ -41,10 +42,8 @@ int encrypt_sym(uint8_t *plaintext, size_t len, uint8_t *key, uint8_t *ciphertex
     if (len == 0 || len % BLOCK_SIZE)
         return -1;
 
-    static const uint8_t zero_iv[BLOCK_SIZE] = {0};
-
     // Set the key for encryption
-    result = wc_AesSetKey(&ctx, key, KEY_SIZE, zero_iv, AES_ENCRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, TRANSFER_IV, AES_ENCRYPTION);
     if (result != 0)
         return result; // Report error
 
@@ -75,10 +74,8 @@ int decrypt_sym(uint8_t *ciphertext, size_t len, uint8_t *key, uint8_t *plaintex
     if (len == 0 || len % BLOCK_SIZE)
         return -1;
 
-    static const uint8_t zero_iv[BLOCK_SIZE] = {0};
-
     // Set the key for decryption
-    result = wc_AesSetKey(&ctx, key, KEY_SIZE, zero_iv, AES_DECRYPTION);
+    result = wc_AesSetKey(&ctx, key, KEY_SIZE, TRANSFER_IV, AES_DECRYPTION);
     if (result != 0)
         return result; // Report error
 
