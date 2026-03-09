@@ -80,7 +80,7 @@ uvx ectf tools COMX read -f abc123 0 ./output
 
 ### The Write Command
 
-The read command is a function that will write a file to an HSM. Write `is` pin protected.
+The write command is a function that will write a file to an HSM. Write `is` pin protected.
 
 Example Usage:
 ```
